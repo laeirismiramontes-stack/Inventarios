@@ -24,11 +24,21 @@ insert into public.usuarios (email, nombre, puede_cargar) values ('correo@kuroda
 
 ## Actualizar la información
 
-Botón **Actualizar base de datos** → elegir el Excel (las hojas se detectan por encabezados) → **Subir información**.
+Botón **Actualizar base de datos** → elegir el Excel (las hojas se detectan por encabezados) → revisar la validación → **Subir información**.
 
-- **Compras**: se agregan o actualizan por *Orden de Compra + Número de Renglón*; nunca se duplican.
-- **Inventario**: se reemplaza completo (solo al terminar la carga sin errores).
-- **Ventas**: se reemplazan los días que trae el archivo.
+Se puede subir siempre el archivo completo: solo se escribe lo que cambió.
+
+- **Compras**: se agregan las OC nuevas y se actualizan solo los renglones que cambiaron (*Orden de Compra + Número de Renglón*).
+- **Inventario**: se reemplaza completo, solo al terminar la carga sin errores.
+- **Ventas**: cada lote lleva días completos; por día, si es igual a lo guardado se salta, si cambió se reemplaza y si es nuevo se agrega.
+
+La lógica está en `carga.js` (lotes de 1,000–2,000 filas en formato compacto, 3 en paralelo, con reintentos). Todos los lotes son idempotentes: reintentar no duplica. Referencia: inventario + compras + 138,657 ventas (154 mil filas) se suben en ~20 s.
+
+Prueba desde Node con el mismo código del navegador:
+
+```bash
+node tools/prueba_carga.js "archivo.xlsx" solo-analizar
+```
 
 ## Base de datos (Supabase)
 

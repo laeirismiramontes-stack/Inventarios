@@ -3,7 +3,6 @@
 const { SUPABASE_URL, SUPABASE_KEY } = window.APP_CONFIG;
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (s) => document.querySelector(s);
-const LOTE = 500;
 let token = null;
 
 // ---------- API ----------
@@ -169,15 +168,7 @@ class Tabla {
     const pages = Math.max(1, Math.ceil(this.rows.length / this.pageSize));
     if (this.page >= pages) this.page = pages - 1;
     const start = this.page * this.pageSize;
-    const slice = this.rows.slice(start, start + this.pageSize);
-    this.tbody.innerHTML = slice.length
-      ? slice.map((r, i) => `<tr data-i="${start + i}">${this.cols.map((c) => {
-        const html = c.render ? c.render(r) : esc(fmt(c, r[c.k]));
-        const title = c.render ? '' : ` title="${esc(fmt(c, r[c.k]))}"`;
-        const cls = [NUMERIC.has(c.type) ? 'n' : '', c.cls || ''].filter(Boolean).join(' ');
-        return `<td${cls ? ` class="${cls}"` : ''}${title}>${html}</td>`;
-      }).join('')}</tr>`).join('')
-      : `<tr><td class="vacio" colspan="${this.cols.length}">Sin resultados con los filtros actuales</td></tr>`;
+    this.pintarCuerpo(this.rows.slice(start, start + this.pageSize), start);
 
     if (this.info) this.info.textContent = `${nf0.format(this.rows.length)} de ${nf0.format(this.base.length)} registros`;
     if (!this.pager) return;
@@ -194,10 +185,22 @@ class Tabla {
     this.pager.querySelectorAll('button').forEach((b) => { b.onclick = () => { this.page = Number(b.dataset.p); this.render(); }; });
   }
 
-  exportarCSV() {
+  // slice: filas a mostrar; start: índice en this.rows de la primera (para el clic en la fila)
+  pintarCuerpo(slice, start) {
+    this.tbody.innerHTML = slice.length
+      ? slice.map((r, i) => `<tr data-i="${start + i}">${this.cols.map((c) => {
+        const html = c.render ? c.render(r) : esc(fmt(c, r[c.k]));
+        const title = c.render ? '' : ` title="${esc(fmt(c, r[c.k]))}"`;
+        const cls = [NUMERIC.has(c.type) ? 'n' : '', c.cls || ''].filter(Boolean).join(' ');
+        return `<td${cls ? ` class="${cls}"` : ''}${title}>${html}</td>`;
+      }).join('')}</tr>`).join('')
+      : `<tr><td class="vacio" colspan="${this.cols.length}">Sin resultados con los filtros actuales</td></tr>`;
+  }
+
+  exportarCSV(rows = this.rows) {
     const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
     const lines = [this.cols.map((c) => q(c.t)).join(',')];
-    this.rows.forEach((r) => lines.push(this.cols.map((c) => {
+    rows.forEach((r) => lines.push(this.cols.map((c) => {
       const v = r[c.k];
       return NUMERIC.has(c.type) ? (v ?? '') : q(fmt(c, v));
     }).join(',')));
@@ -207,6 +210,70 @@ class Tabla {
     a.download = `${this.nombre}_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+}
+
+// Tabla cuyos filtros, orden y paginación se resuelven en el servidor (para tablas grandes como ventas).
+// buscar({ columnas, orden, desc, offset, limit }) => { total, filas, ...totales }
+class TablaServidor extends Tabla {
+  constructor(opts) {
+    super(opts);
+    this.buscar = opts.buscar;
+    this.sort = opts.sort || null;
+    this.total = 0; this.req = 0;
+  }
+
+  setRows() { this.recargar(); }
+  recargar() { this.page = 0; this.apply(); }
+
+  async apply() {
+    const req = ++this.req;
+    this.headCells.forEach((th, i) => {
+      th.querySelector('.sort').textContent = this.sort && this.sort.k === this.cols[i].k ? (this.sort.dir > 0 ? '▲' : '▼') : '';
+    });
+    if (this.info) this.info.textContent = 'Buscando…';
+    try {
+      const r = await this.buscar(this.consulta(this.page * this.pageSize, this.pageSize));
+      if (req !== this.req) return; // llegó una búsqueda más nueva
+      this.rows = r.filas; this.total = r.total;
+      if (this.onFiltered) this.onFiltered(r);
+      this.render();
+    } catch (err) {
+      if (req === this.req && this.info) this.info.textContent = `Error: ${err.message}`;
+    }
+  }
+
+  consulta(offset, limit) {
+    return { columnas: this.colF, orden: this.sort ? this.sort.k : null, desc: this.sort ? this.sort.dir < 0 : true, offset, limit };
+  }
+
+  render() {
+    const pages = Math.max(1, Math.ceil(this.total / this.pageSize));
+    const start = this.page * this.pageSize;
+    const page = this.page; const total = this.total;
+    this.pintarCuerpo(this.rows, 0); // this.rows ya es solo la página que mandó el servidor
+    if (this.info) this.info.textContent = `${nf0.format(total)} registros`;
+    if (!this.pager) return;
+    this.pager.innerHTML = `
+      <span>Filas por página</span>
+      <select>${[50, 100, 250, 500].map((n) => `<option ${n === this.pageSize ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <span>${total ? nf0.format(start + 1) : 0}–${nf0.format(Math.min(start + this.pageSize, total))} de ${nf0.format(total)}</span>
+      <button data-p="0" ${page === 0 ? 'disabled' : ''}>«</button>
+      <button data-p="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹</button>
+      <span>Página ${page + 1} de ${nf0.format(pages)}</span>
+      <button data-p="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>›</button>
+      <button data-p="${pages - 1}" ${page >= pages - 1 ? 'disabled' : ''}>»</button>`;
+    this.pager.querySelector('select').onchange = (e) => { this.pageSize = Number(e.target.value); this.recargar(); };
+    this.pager.querySelectorAll('button').forEach((b) => { b.onclick = () => { this.page = Number(b.dataset.p); this.apply(); }; });
+  }
+
+  async exportarCSV() {
+    const todas = [];
+    for (let off = 0; off < this.total; off += 20000) {
+      const r = await this.buscar(this.consulta(off, 20000));
+      todas.push(...r.filas);
+    }
+    Tabla.prototype.exportarCSV.call(this, todas);
   }
 }
 
@@ -328,12 +395,19 @@ const COLS_CARGAS = [
   { k: 'registros_compras', t: 'Compras procesadas', type: 'int' },
   { k: 'compras_nuevas', t: 'Compras nuevas', type: 'int' },
   { k: 'compras_actualizadas', t: 'Compras actualizadas', type: 'int' },
+  { k: 'compras_sin_cambio', t: 'Compras sin cambio', type: 'int' },
   { k: 'registros_ventas', t: 'Renglones ventas', type: 'int' },
+  { k: 'ventas_dias_nuevos', t: 'Días de venta nuevos', type: 'int' },
+  { k: 'ventas_dias_reemplazados', t: 'Días reemplazados', type: 'int' },
+  { k: 'ventas_dias_sin_cambio', t: 'Días sin cambio', type: 'int' },
+  { k: 'filas_omitidas', t: 'Filas omitidas', type: 'int' },
   { k: 'fecha_max_orden', t: 'OC más reciente en base', type: 'date' },
+  { k: 'error', t: 'Error' },
 ];
 
 // ---------- Estado ----------
-const S = { compras: [], inv: [], ventas: [], cargas: [], invPorMaterial: new Map(), comprasPorMaterial: new Map(), ventasPorMaterial: new Map() };
+// Las ventas (cientos de miles de filas) no se descargan: se consultan en el servidor con ventas_buscar.
+const S = { compras: [], inv: [], cargas: [], ventasInfo: null, invPorMaterial: new Map(), comprasPorMaterial: new Map() };
 
 const tInv = new Tabla({
   el: '#tblInv', pager: '#pagInv', info: '#infoInv', cols: COLS_INV, nombre: 'inventario',
@@ -343,10 +417,22 @@ const tCompras = new Tabla({
   el: '#tblCompras', pager: '#pagCompras', info: '#infoCompras', cols: COLS_COMPRAS, nombre: 'compras',
   onRow: (r) => detalleCompra(r), onFiltered: (rows) => kpisCompras(rows),
 });
-const tVentas = new Tabla({
+const tVentas = new TablaServidor({
   el: '#tblVentas', pager: '#pagVentas', info: '#infoVentas', cols: COLS_VENTAS, nombre: 'ventas',
+  sort: { k: 'fecha_factura', dir: -1 },
   onRow: (r) => { const i = S.inv.find((x) => x.codigo_material === r.codigo_material); if (i) detalleMaterial(i); },
-  onFiltered: (rows) => kpisVentas(rows),
+  onFiltered: (r) => kpisVentas(r),
+  buscar: async ({ columnas, orden, desc, offset, limit }) => {
+    const r = await rpc('ventas_buscar', {
+      p_filtros: {
+        buscar: $('#fvBuscar').value, mes: $('#fvMes').value, desde: $('#fvDesde').value, hasta: $('#fvHasta').value,
+        vendedor: $('#fvVendedor').value, canal: $('#fvCanal').value, columnas,
+      },
+      p_orden: orden || 'fecha_factura', p_desc: desc, p_offset: offset, p_limit: limit,
+    });
+    r.filas.forEach((f) => { f._mes = mesDe(f.fecha_factura); });
+    return r;
+  },
 });
 const tCargas = new Tabla({ el: '#tblCargas', cols: COLS_CARGAS, pageSize: 1000, nombre: 'cargas' });
 
@@ -367,12 +453,12 @@ function kpisInv(rows) {
     + kpi('Última compra para venta / cliente', nf0.format(rows.filter((r) => r._destino === 'Venta / Cliente').length))
     + kpi('Sin compras feb–hoy', nf0.format(rows.filter((r) => !r._nCompras).length));
 }
-function kpisVentas(rows) {
-  $('#kpisVentas').innerHTML = kpi('Renglones', nf0.format(rows.length))
-    + kpi('Facturas', nf0.format(new Set(rows.map((r) => r.folio_factura)).size))
-    + kpi('Importe de venta', mf.format(sum(rows, 'importe_venta')))
-    + kpi('Costo de ventas', mf.format(sum(rows, 'costo_ventas')))
-    + kpi('Clientes', nf0.format(new Set(rows.map((r) => r.nombre_cliente)).size));
+function kpisVentas(r) {
+  $('#kpisVentas').innerHTML = kpi('Renglones', nf0.format(r.total))
+    + kpi('Facturas', nf0.format(r.facturas))
+    + kpi('Importe de venta', mf.format(r.importe))
+    + kpi('Costo de ventas', mf.format(r.costo))
+    + kpi('Clientes', nf0.format(r.clientes));
 }
 
 // ---------- Filtros superiores ----------
@@ -429,20 +515,11 @@ function filtrarInv() {
     return words.every((w) => r._s.includes(w));
   }));
 }
-function filtrarVentas() {
-  const words = palabras('#fvBuscar');
-  const f = { _mes: $('#fvMes').value, nombre_vendedor: $('#fvVendedor').value, canal_distribucion: $('#fvCanal').value };
-  const desde = $('#fvDesde').value; const hasta = $('#fvHasta').value;
-  tVentas.setRows(S.ventas.filter((r) => {
-    if (!enRango(r.fecha_factura, desde, hasta)) return false;
-    for (const k in f) if (f[k] && r[k] !== f[k]) return false;
-    return words.every((w) => r._s.includes(w));
-  }));
-}
+function filtrarVentas() { tVentas.recargar(); }
 
 function debounce(fn, ms = 200) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-function conectarFiltros(panel, buscar, fn, tabla) {
-  $(buscar).addEventListener('input', debounce(fn));
+function conectarFiltros(panel, buscar, fn, tabla, espera = 200) {
+  $(buscar).addEventListener('input', debounce(fn, espera));
   document.querySelectorAll(`${panel} .filtros select, ${panel} .filtros input[type=date]`).forEach((s) => s.addEventListener('change', fn));
   $(`${panel} .filtros .btn`).onclick = () => {
     document.querySelectorAll(`${panel} .filtros input, ${panel} .filtros select`).forEach((i) => { i.value = ''; });
@@ -451,7 +528,7 @@ function conectarFiltros(panel, buscar, fn, tabla) {
 }
 conectarFiltros('#tab-compras', '#fcBuscar', filtrarCompras, tCompras);
 conectarFiltros('#tab-inventario', '#fiBuscar', filtrarInv, tInv);
-conectarFiltros('#tab-ventas', '#fvBuscar', filtrarVentas, tVentas);
+conectarFiltros('#tab-ventas', '#fvBuscar', filtrarVentas, tVentas, 400); // más espera: cada búsqueda va al servidor
 $('#expCompras').onclick = () => tCompras.exportarCSV();
 $('#expInv').onclick = () => tInv.exportarCSV();
 $('#expVentas').onclick = () => tVentas.exportarCSV();
@@ -470,17 +547,16 @@ const agrupar = (rows, k) => rows.reduce((m, r) => { const l = m.get(r[k]) || []
 async function cargarTodo() {
   $('#cargaInfo').textContent = 'Leyendo información de la base de datos…';
   try {
-    const [compras, inv, ventas, comentarios, cargas] = await Promise.all([
+    const [compras, inv, comentarios, cargas, ventasInfo] = await Promise.all([
       fetchAll('compras_destino', SELECT_COMPRAS, 'fecha_orden.desc,orden_compra.desc,numero_renglon.asc'),
       fetchAll('inventario', '*', 'id.asc'),
-      fetchAll('ventas', '*', 'fecha_factura.desc,folio_factura.desc,id.asc'),
       fetchAll('material_comentario', '*', 'codigo_material.asc'),
       fetchAll('cargas', '*', 'id.desc'),
+      rpc('ventas_opciones', {}),
     ]);
 
     S.invPorMaterial = agrupar(inv, 'codigo_material');
     S.comprasPorMaterial = agrupar(compras, 'codigo_material');
-    S.ventasPorMaterial = agrupar(ventas, 'codigo_material');
     const comPorMaterial = new Map(comentarios.map((c) => [c.codigo_material, c]));
 
     compras.forEach((r) => {
@@ -490,10 +566,6 @@ async function cargarTodo() {
       r._s = norm([r.orden_compra, r.texto_cabecera, r.nuestra_referencia, r.referencia, r.solicitante_oc, r.nombre_usuario,
         r.descripcion_motivo_pedido, r.nombre_proveedor, r.codigo_material, r.descripcion_material, r.destino, r.documento_venta,
         r.vendedor_oc].join(' | '));
-    });
-    ventas.forEach((r) => {
-      r._mes = mesDe(r.fecha_factura);
-      r._s = norm([r.folio_factura, r.codigo_material, r.descripcion_material, r.nombre_cliente, r.nombre_vendedor].join(' | '));
     });
     inv.forEach((r) => {
       const list = S.comprasPorMaterial.get(r.codigo_material) || [];
@@ -513,7 +585,7 @@ async function cargarTodo() {
         r.descrip_gpo_materiales, r.grupo_articulos_externo, r._comentario].join(' | '));
     });
 
-    Object.assign(S, { compras, inv, ventas, cargas });
+    Object.assign(S, { compras, inv, cargas, ventasInfo });
 
     opcionesMes($('#fcMes'), compras.map((r) => r._mes));
     opciones($('#fcDestino'), compras.map((r) => r.destino));
@@ -527,9 +599,12 @@ async function cargarTodo() {
     opciones($('#fiGrupo'), inv.map((r) => r.descrip_gpo_materiales));
     opciones($('#fiProveedor'), inv.map((r) => r.nombre_proveedor));
     opciones($('#fiAbc'), inv.map((r) => r.indicador_abc_actual));
-    opcionesMes($('#fvMes'), ventas.map((r) => r._mes));
-    opciones($('#fvVendedor'), ventas.map((r) => r.nombre_vendedor));
-    opciones($('#fvCanal'), ventas.map((r) => r.canal_distribucion));
+    // mes de ventas: valor 'aaaa-mm' (lo que filtra el servidor), texto 'Marzo 2026'
+    const mesSel = $('#fvMes').value;
+    $('#fvMes').innerHTML = '<option value="">Todos</option>' + (ventasInfo.meses || [])
+      .map((m) => `<option value="${m}" ${m === mesSel ? 'selected' : ''}>${mesDe(`${m}-01`)}</option>`).join('');
+    opciones($('#fvVendedor'), ventasInfo.vendedores || []);
+    opciones($('#fvCanal'), ventasInfo.canales || []);
 
     filtrarInv();
     filtrarCompras();
@@ -544,7 +619,8 @@ async function cargarTodo() {
 function ultimaCarga() { return S.cargas.find((c) => c.estado === 'completada'); }
 function pintarUltimaCarga() {
   const c = ultimaCarga();
-  const ventasRango = S.ventas.length ? `${fDate(S.ventas[S.ventas.length - 1].fecha_factura)} al ${fDate(S.ventas[0].fecha_factura)}` : 'sin ventas';
+  const v = S.ventasInfo;
+  const ventasRango = v && v.total ? `${fDate(v.desde)} al ${fDate(v.hasta)} (${nf0.format(v.total)})` : 'sin ventas';
   $('#cargaInfo').innerHTML = c
     ? `<b>Última carga:</b> ${esc(fDateTime(c.fecha))} · ${esc(c.archivo || '')}<br>`
       + `<b>OC más reciente:</b> ${esc(fDate(c.fecha_max_orden))} · <b>Ventas:</b> ${esc(ventasRango)} · ${nf0.format(S.inv.length)} renglones de inventario`
@@ -590,39 +666,41 @@ async function detalleCompra(r) {
   }
 }
 
-function detalleMaterial(r) {
+async function detalleMaterial(r) {
   $('#detTitulo').textContent = `Material ${r.codigo_material}`;
   const compras = S.comprasPorMaterial.get(r.codigo_material) || [];
-  const ventas = S.ventasPorMaterial.get(r.codigo_material) || [];
   $('#detCuerpo').innerHTML = `<p><b>${esc(r.descripcion_material)}</b></p>`
     + `<p class="hint">${badgeDestino(r._destino)} ${esc(r._comentario)}</p>`
     + gridCampos(r, LABELS_INV, { cantidad_propia: 'num', importe_inventario_propio: 'money', costo_reposicion_unitario: 'money', costo_promedio_unitario: 'money' })
     + `<h3 class="det-sub">Compras de este material y para quién se compraron (${compras.length})</h3>`
     + miniTabla(pick(COLS_COMPRAS, ['fecha_orden', 'orden_compra', 'numero_renglon', 'destino', 'vendedor_oc', 'texto_cabecera', 'nombre_usuario',
       'descripcion_motivo_pedido', 'cantidad_pedida', 'cantidad_entrada', 'cantidad_pendiente', 'costo_pedido']), compras)
-    + `<h3 class="det-sub">Ventas de este material (${ventas.length})</h3>`
-    + miniTabla(pick(COLS_VENTAS, ['fecha_factura', 'folio_factura', 'cantidad_facturada', 'nombre_cliente', 'nombre_vendedor', 'importe_venta']), ventas);
+    + '<div id="detVentas"><h3 class="det-sub">Ventas de este material</h3><p class="hint">Cargando…</p></div>';
   abrir('#modalDetalle');
+  try {
+    const res = await api(`ventas?codigo_material=eq.${encodeURIComponent(r.codigo_material)}&order=fecha_factura.desc,id.asc`
+      + '&select=fecha_factura,folio_factura,cantidad_facturada,nombre_cliente,nombre_vendedor,importe_venta', { headers: { Range: '0-499', Prefer: 'count=exact' } });
+    const ventas = await res.json();
+    const total = Number((res.headers.get('content-range') || '').split('/')[1]) || ventas.length;
+    const box = $('#detVentas');
+    if (!box) return; // el detalle ya se cerró o cambió
+    box.innerHTML = `<h3 class="det-sub">Ventas de este material (${nf0.format(total)}${total > ventas.length ? `, se muestran las ${ventas.length} más recientes` : ''})</h3>`
+      + miniTabla(pick(COLS_VENTAS, ['fecha_factura', 'folio_factura', 'cantidad_facturada', 'nombre_cliente', 'nombre_vendedor', 'importe_venta']), ventas);
+  } catch (err) {
+    const box = $('#detVentas');
+    if (box) box.innerHTML = `<p class="msg err">${esc(err.message)}</p>`;
+  }
 }
 
 // ---------- Actualización de la base de datos ----------
+// La lectura, validación y subida por lotes viven en carga.js (también se prueban desde Node).
 let libro = null; let subiendo = false;
-const DETECTAR = {
-  compras: (h) => h.includes('Orden de Compra') && h.includes('Número de Renglón'),
-  inventario: (h) => h.includes('Cantidad Propia') && h.includes('Codigo Material'),
-  ventas: (h) => h.includes('Folio de la Factura') && h.includes('Cantidad Facturada UMB'),
-};
-const DESCRIPCION_TIPO = {
-  inventario: 'Inventario: reemplaza el inventario completo.',
-  compras: 'Compras: agrega OC nuevas y actualiza las existentes (Orden de Compra + Renglón).',
-  ventas: 'Ventas: reemplaza las ventas de los días que trae el archivo.',
-};
-const ORDEN_TIPO = { inventario: 0, compras: 1, ventas: 2 };
 
 $('#btnActualizar').onclick = () => {
   const c = ultimaCarga();
   $('#hintCarga').innerHTML = c
-    ? `Última carga: <b>${esc(fDateTime(c.fecha))}</b>. La OC más reciente en la base es del <b>${esc(fDate(c.fecha_max_orden))}</b>: basta con subir el reporte de compras desde esa fecha, la hoja de inventario actual y las ventas de los días nuevos.`
+    ? `Última carga: <b>${esc(fDateTime(c.fecha))}</b>. La OC más reciente en la base es del <b>${esc(fDate(c.fecha_max_orden))}</b>. `
+      + 'Puedes subir el archivo completo: lo que no cambió se salta, así que solo se escribe la actualización.'
     : 'Sube el Excel con las hojas de inventario, reporte de compras y/o ventas.';
   $('#msgCarga').textContent = ''; $('#msgCarga').className = 'msg';
   $('#progreso').hidden = true;
@@ -630,25 +708,28 @@ $('#btnActualizar').onclick = () => {
 };
 $('#btnRecargar').onclick = cargarTodo;
 
+function rangoTxt(h) {
+  return h.desde ? ` · ${fDate(h.desde)} al ${fDate(h.hasta)}${h.tipo === 'ventas' ? ` (${nf0.format(h.dias)} días)` : ''}` : '';
+}
+
 $('#archivo').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  libro = null; $('#hojas').innerHTML = ''; $('#btnSubir').disabled = true; $('#msgCarga').textContent = '';
+  libro = null; $('#hojas').innerHTML = ''; $('#btnSubir').disabled = true;
+  $('#progreso').hidden = true; $('#msgCarga').className = 'msg'; $('#msgCarga').textContent = '';
   if (!file) return;
-  $('#msgCarga').className = 'msg'; $('#msgCarga').textContent = 'Leyendo archivo…';
+  $('#msgCarga').textContent = 'Leyendo y validando el archivo…';
+  await new Promise((r) => setTimeout(r, 30)); // deja pintar el mensaje antes de leer
   try {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    const hojas = [];
-    wb.SheetNames.forEach((name) => {
-      const filas = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: true })
-        .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim(), typeof v === 'string' ? v.trim() : v])));
-      const headers = Object.keys(filas[0] || {});
-      const tipo = Object.keys(DETECTAR).find((t) => DETECTAR[t](headers));
-      if (tipo) hojas.push({ name, tipo, filas });
-    });
+    const hojas = Carga.analizarLibro(XLSX, wb);
     if (!hojas.length) throw new Error('No se encontró una hoja de inventario, reporte de compras o ventas con los encabezados esperados.');
     libro = { nombre: file.name, hojas };
-    $('#hojas').innerHTML = hojas.map((h, i) => `<label><input type="checkbox" data-i="${i}" checked>
-      <span><b>${esc(h.name)}</b> · ${nf0.format(h.filas.length)} filas<small>${DESCRIPCION_TIPO[h.tipo]}</small></span></label>`).join('');
+    $('#hojas').innerHTML = hojas.map((h, i) => `<label class="${h.errores.length ? 'con-error' : ''}">
+      <input type="checkbox" data-i="${i}" ${h.errores.length && !h.filas.length ? 'disabled' : 'checked'}>
+      <span><b>${esc(h.name)}</b> · ${nf0.format(h.filas.length)} filas válidas${esc(rangoTxt(h))}
+      <small>${esc(Carga.TIPOS[h.tipo].descripcion)}</small>
+      ${h.avisos.map((a) => `<small class="aviso">⚠ ${esc(a)}</small>`).join('')}
+      ${h.errores.map((a) => `<small class="error">✖ ${esc(a)}</small>`).join('')}</span></label>`).join('');
     $('#msgCarga').textContent = '';
     $('#btnSubir').disabled = false;
   } catch (err) {
@@ -656,44 +737,47 @@ $('#archivo').addEventListener('change', async (e) => {
   }
 });
 
+function duracion(seg) {
+  seg = Math.max(0, Math.round(seg));
+  return seg < 60 ? `${seg} s` : `${Math.floor(seg / 60)} min ${seg % 60} s`;
+}
+
 $('#btnSubir').onclick = async () => {
   const msg = $('#msgCarga');
-  const elegidas = [...$('#hojas').querySelectorAll('input:checked')].map((i) => libro.hojas[Number(i.dataset.i)])
-    .sort((a, b) => ORDEN_TIPO[a.tipo] - ORDEN_TIPO[b.tipo]);
+  const elegidas = [...$('#hojas').querySelectorAll('input:checked')].map((i) => libro.hojas[Number(i.dataset.i)]);
   if (!elegidas.length) { msg.className = 'msg err'; msg.textContent = 'Selecciona al menos una hoja.'; return; }
 
-  subiendo = true; $('#btnSubir').disabled = true; msg.className = 'msg'; msg.textContent = '';
-  $('#progreso').hidden = false;
-  const total = elegidas.reduce((a, h) => a + h.filas.length, 0);
-  let hechos = 0;
-  const avance = (t) => {
-    const p = total ? Math.round((hechos / total) * 100) : 100;
-    $('#barra').style.width = `${p}%`; $('#progTxt').textContent = `${t} · ${p}%`;
-  };
+  subiendo = true; $('#btnSubir').disabled = true; $('#archivo').disabled = true;
+  msg.className = 'msg'; msg.textContent = '';
+  $('#progreso').hidden = false; $('#barra').style.width = '0%'; $('#progTxt').textContent = 'Iniciando…';
   try {
-    avance('Iniciando');
-    const id = await rpc('iniciar_carga', { p_archivo: libro.nombre });
-    for (const h of elegidas) {
-      for (let i = 0; i < h.filas.length; i += LOTE) {
-        const lote = h.filas.slice(i, i + LOTE);
-        await rpc('cargar_lote', { p_carga_id: id, p_tipo: h.tipo, p_filas: lote });
-        hechos += lote.length;
-        avance(`Subiendo ${h.name}`);
-      }
+    const { carga, resumen, segundos } = await Carga.subir({
+      rpc, archivo: libro.nombre, hojas: elegidas,
+      alAvanzar: (p) => {
+        const pct = Math.round((p.hechas / p.total) * 100);
+        $('#barra').style.width = `${pct}%`;
+        $('#progTxt').textContent = `${p.hoja} · ${pct}% · ${nf0.format(p.velocidad)} filas/s · faltan ~${duracion(p.restanteSeg)}`;
+      },
+    });
+    const li = [];
+    if (elegidas.some((h) => h.tipo === 'inventario')) li.push(`Inventario reemplazado: ${nf0.format(carga.registros_inventario)} renglones.`);
+    if (elegidas.some((h) => h.tipo === 'compras')) {
+      li.push(`Compras: ${nf0.format(resumen.compras_nuevas)} nuevas, ${nf0.format(resumen.compras_actualizadas)} actualizadas, ${nf0.format(resumen.compras_sin_cambio)} sin cambio.`);
     }
-    avance('Finalizando');
-    const c = await rpc('finalizar_carga', { p_carga_id: id });
-    const partes = [];
-    if (c.registros_compras) partes.push(`${nf0.format(c.compras_nuevas)} compras nuevas y ${nf0.format(c.compras_actualizadas)} actualizadas`);
-    if (c.registros_inventario) partes.push(`inventario reemplazado con ${nf0.format(c.registros_inventario)} renglones`);
-    if (c.registros_ventas) partes.push(`${nf0.format(c.registros_ventas)} renglones de ventas`);
+    if (elegidas.some((h) => h.tipo === 'ventas')) {
+      li.push(`Ventas: ${nf0.format(resumen.ventas_dias_nuevos)} días nuevos, ${nf0.format(resumen.ventas_dias_reemplazados)} reemplazados, `
+        + `${nf0.format(resumen.ventas_dias_sin_cambio)} sin cambio (${nf0.format(resumen.ventas)} renglones revisados).`);
+    }
+    if (resumen.omitidas) li.push(`${nf0.format(resumen.omitidas)} fila(s) omitidas por no tener llave (totales o vacías).`);
     msg.className = 'msg ok';
-    msg.textContent = `Carga #${c.id} completada: ${partes.join(', ')}.`;
+    msg.innerHTML = `<b>Carga #${carga.id} completada en ${duracion(segundos)}.</b><ul>${li.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    $('#barra').style.width = '100%'; $('#progTxt').textContent = 'Listo';
     await cargarTodo();
   } catch (err) {
-    msg.className = 'msg err'; msg.textContent = `No se completó la carga: ${err.message}`;
+    msg.className = 'msg err';
+    msg.textContent = `No se completó la carga: ${err.message}. No se perdió información: lo ya guardado es válido y puedes volver a subir el archivo.`;
   } finally {
-    subiendo = false; $('#btnSubir').disabled = false;
+    subiendo = false; $('#btnSubir').disabled = false; $('#archivo').disabled = false;
   }
 };
 

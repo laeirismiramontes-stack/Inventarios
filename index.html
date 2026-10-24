@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="config.js" defer></script>
+  <script src="carga.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -125,7 +126,7 @@
 
     <section id="tab-cargas" class="panel">
       <div class="card table-card">
-        <div class="table-toolbar"><span>Compras: se agregan o actualizan por Orden de Compra + Renglón. Inventario: se reemplaza completo. Ventas: se reemplazan los días que trae el archivo.</span></div>
+        <div class="table-toolbar"><span>Compras: se agregan las OC nuevas y se actualizan solo los renglones que cambiaron. Inventario: se reemplaza completo. Ventas: se comparan día por día; solo se escriben los días nuevos o que cambiaron.</span></div>
         <div class="table-wrap"><table id="tblCargas"></table></div>
       </div>
     </section>

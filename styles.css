@@ -167,6 +167,10 @@ td.vacio { text-align: center; color: var(--texto-2); padding: 40px; cursor: def
 .link-light { color: #fff; }
 .usuario { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; gap: 2px; }
 .msg { margin-bottom: 8px; }
+.msg ul { margin: 6px 0 0; padding-left: 18px; color: var(--texto); }
+.hojas small.aviso { color: var(--ambar); }
+.hojas small.error { color: var(--rojo); font-weight: 600; }
+.hojas label.con-error { border-color: var(--rojo); background: var(--rojo-suave); }
 td.comentario { max-width: 520px; }
 
 @media (max-width: 720px) {
