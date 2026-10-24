@@ -3,3 +3,6 @@
 *.csv
 clave_carga.txt
 .vercel
+
+.vercel
+.env*
