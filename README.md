@@ -34,11 +34,7 @@ Se puede subir siempre el archivo completo: solo se escribe lo que cambió.
 
 La lógica está en `carga.js` (lotes de 1,000–2,000 filas en formato compacto, 3 en paralelo, con reintentos). Todos los lotes son idempotentes: reintentar no duplica. Referencia: inventario + compras + 138,657 ventas (154 mil filas) se suben en ~20 s.
 
-Prueba desde Node con el mismo código del navegador:
-
-```bash
-node tools/prueba_carga.js "archivo.xlsx" solo-analizar
-```
+carga.js también funciona en Node (module.exports) para probar cargas con el mismo código del navegador.
 
 ## Base de datos (Supabase)
 
