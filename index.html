@@ -40,17 +40,17 @@
     </div>
     <div class="carga-info" id="cargaInfo">Cargando…</div>
     <div class="top-actions">
-      <button class="btn btn-ghost" id="btnRecargar" title="Volver a leer los datos">↻ Refrescar</button>
-      <button class="btn btn-light" id="btnActualizar" hidden>⬆ Actualizar base de datos</button>
+      <button class="btn btn-ghost" id="btnRecargar" title="Volver a leer los datos" aria-label="Refrescar">↻<span class="solo-amplio"> Refrescar</span></button>
+      <button class="btn btn-light" id="btnActualizar" hidden>⬆ <span class="solo-amplio">Actualizar base de datos</span><span class="solo-movil">Actualizar</span></button>
       <div class="usuario"><span id="usuarioEmail"></span><button class="link link-light" id="btnSalir">Salir</button></div>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="inventario">Inventario actual</button>
-    <button class="tab" data-tab="compras">Compras · ¿Para quién?</button>
+    <button class="tab active" data-tab="inventario">Inventario<span class="solo-amplio"> actual</span></button>
+    <button class="tab" data-tab="compras">Compras<span class="solo-amplio"> · ¿Para quién?</span></button>
     <button class="tab" data-tab="ventas">Ventas</button>
-    <button class="tab" data-tab="cargas">Historial de cargas</button>
+    <button class="tab" data-tab="cargas"><span class="solo-amplio">Historial de </span>Cargas</button>
   </nav>
 
   <main>

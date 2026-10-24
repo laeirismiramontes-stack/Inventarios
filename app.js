@@ -77,10 +77,31 @@ function badgeDestino(d) {
 
 // ---------- Tabla genérica con orden, filtros por columna y paginación ----------
 class Tabla {
-  constructor({ el, pager, info, cols, onRow, onFiltered, pageSize = 100, nombre }) {
+  // movil: claves de las columnas que se muestran en la tarjeta del celular (la primera es el título)
+  constructor({ el, pager, info, cols, onRow, onFiltered, pageSize = 100, nombre, movil }) {
     Object.assign(this, { el: $(el), pager: pager && $(pager), info: info && $(info), cols, onRow, onFiltered, pageSize, nombre });
+    this.movil = new Set(movil || cols.map((c) => c.k));
+    this.titulo = movil ? movil[0] : cols[0].k;
     this.base = []; this.rows = []; this.colF = {}; this.sort = null; this.page = 0;
     this.buildHead();
+    this.buildOrdenMovil();
+  }
+
+  // En celular no hay encabezados: el orden se elige con un select en la barra de la tabla
+  buildOrdenMovil() {
+    const bar = this.el.closest('.table-card')?.querySelector('.table-toolbar');
+    if (!bar) return;
+    const sel = document.createElement('select');
+    sel.className = 'orden-movil';
+    sel.setAttribute('aria-label', 'Ordenar por');
+    sel.innerHTML = '<option value="">Ordenar por…</option>' + this.cols.filter((c) => this.movil.has(c.k))
+      .map((c) => `<option value="${c.k}|1">${esc(c.t)} ↑</option><option value="${c.k}|-1">${esc(c.t)} ↓</option>`).join('');
+    sel.addEventListener('change', () => {
+      const [k, dir] = sel.value.split('|');
+      this.sort = k ? { k, dir: Number(dir) } : null;
+      this.page = 0; this.apply();
+    });
+    bar.insertBefore(sel, bar.children[1] || null);
   }
 
   buildHead() {
@@ -191,8 +212,9 @@ class Tabla {
       ? slice.map((r, i) => `<tr data-i="${start + i}">${this.cols.map((c) => {
         const html = c.render ? c.render(r) : esc(fmt(c, r[c.k]));
         const title = c.render ? '' : ` title="${esc(fmt(c, r[c.k]))}"`;
-        const cls = [NUMERIC.has(c.type) ? 'n' : '', c.cls || ''].filter(Boolean).join(' ');
-        return `<td${cls ? ` class="${cls}"` : ''}${title}>${html}</td>`;
+        const cls = [NUMERIC.has(c.type) ? 'n' : '', c.cls || '', this.movil.has(c.k) ? '' : 'no-movil',
+          c.k === this.titulo ? 'titulo' : ''].filter(Boolean).join(' ');
+        return `<td data-label="${esc(c.t)}"${cls ? ` class="${cls}"` : ''}${title}>${html}</td>`;
       }).join('')}</tr>`).join('')
       : `<tr><td class="vacio" colspan="${this.cols.length}">Sin resultados con los filtros actuales</td></tr>`;
   }
@@ -411,14 +433,17 @@ const S = { compras: [], inv: [], cargas: [], ventasInfo: null, invPorMaterial: 
 
 const tInv = new Tabla({
   el: '#tblInv', pager: '#pagInv', info: '#infoInv', cols: COLS_INV, nombre: 'inventario',
+  movil: ['codigo_material', 'descripcion_material', 'cantidad_propia', '_destino', '_comentario', '_ultFecha', 'importe_inventario_propio'],
   onRow: (r) => detalleMaterial(r), onFiltered: (rows) => kpisInv(rows),
 });
 const tCompras = new Tabla({
   el: '#tblCompras', pager: '#pagCompras', info: '#infoCompras', cols: COLS_COMPRAS, nombre: 'compras',
+  movil: ['orden_compra', 'fecha_orden', 'destino', 'vendedor_oc', 'texto_cabecera', 'descripcion_material', 'cantidad_pedida', 'cantidad_pendiente', 'costo_pedido'],
   onRow: (r) => detalleCompra(r), onFiltered: (rows) => kpisCompras(rows),
 });
 const tVentas = new TablaServidor({
   el: '#tblVentas', pager: '#pagVentas', info: '#infoVentas', cols: COLS_VENTAS, nombre: 'ventas',
+  movil: ['descripcion_material', 'fecha_factura', 'folio_factura', 'cantidad_facturada', 'nombre_cliente', 'nombre_vendedor', 'importe_venta'],
   sort: { k: 'fecha_factura', dir: -1 },
   onRow: (r) => { const i = S.inv.find((x) => x.codigo_material === r.codigo_material); if (i) detalleMaterial(i); },
   onFiltered: (r) => kpisVentas(r),
@@ -434,7 +459,8 @@ const tVentas = new TablaServidor({
     return r;
   },
 });
-const tCargas = new Tabla({ el: '#tblCargas', cols: COLS_CARGAS, pageSize: 1000, nombre: 'cargas' });
+const tCargas = new Tabla({ el: '#tblCargas', cols: COLS_CARGAS, pageSize: 1000, nombre: 'cargas',
+  movil: ['fecha', 'archivo', 'estado', 'registros_compras', 'registros_ventas', 'registros_inventario', 'error'] });
 
 function kpi(l, v) { return `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`; }
 function sum(rows, k) { return rows.reduce((a, r) => a + (Number(r[k]) || 0), 0); }
@@ -519,12 +545,25 @@ function filtrarVentas() { tVentas.recargar(); }
 
 function debounce(fn, ms = 200) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 function conectarFiltros(panel, buscar, fn, tabla, espera = 200) {
-  $(buscar).addEventListener('input', debounce(fn, espera));
-  document.querySelectorAll(`${panel} .filtros select, ${panel} .filtros input[type=date]`).forEach((s) => s.addEventListener('change', fn));
-  $(`${panel} .filtros .btn`).onclick = () => {
-    document.querySelectorAll(`${panel} .filtros input, ${panel} .filtros select`).forEach((i) => { i.value = ''; });
-    tabla.limpiarFiltrosColumna(); fn();
+  const caja = $(`${panel} .filtros`);
+  const otros = [...caja.querySelectorAll('select, input[type=date]')];
+  // en celular y tablet los filtros (salvo la búsqueda) se pliegan detrás de este botón
+  const toggle = document.createElement('button');
+  toggle.type = 'button'; toggle.className = 'btn-filtros';
+  const contar = () => {
+    const n = otros.filter((i) => i.value).length;
+    toggle.textContent = `${caja.classList.contains('abierto') ? '▴' : '▾'} Filtros${n ? ` (${n})` : ''}`;
   };
+  toggle.onclick = () => { caja.classList.toggle('abierto'); contar(); };
+  $(buscar).closest('label').after(toggle);
+
+  $(buscar).addEventListener('input', debounce(fn, espera));
+  otros.forEach((s) => s.addEventListener('change', () => { contar(); fn(); }));
+  $(`${panel} .filtros .btn`).onclick = () => {
+    caja.querySelectorAll('input, select').forEach((i) => { i.value = ''; });
+    tabla.limpiarFiltrosColumna(); contar(); fn();
+  };
+  contar();
 }
 conectarFiltros('#tab-compras', '#fcBuscar', filtrarCompras, tCompras);
 conectarFiltros('#tab-inventario', '#fiBuscar', filtrarInv, tInv);
@@ -643,7 +682,7 @@ function gridCampos(obj, labels, tipos = {}) {
 function miniTabla(cols, rows) {
   if (!rows.length) return '<p class="hint">Sin registros.</p>';
   return `<div class="mini-wrap"><table><thead><tr>${cols.map((c) => `<th${NUMERIC.has(c.type) ? ' class="n"' : ''}>${esc(c.t)}</th>`).join('')}</tr></thead><tbody>${
-    rows.map((r) => `<tr>${cols.map((c) => `<td${NUMERIC.has(c.type) ? ' class="n"' : ''}>${c.render ? c.render(r) : esc(fmt(c, r[c.k]))}</td>`).join('')}</tr>`).join('')
+    rows.map((r) => `<tr>${cols.map((c) => `<td data-label="${esc(c.t)}"${NUMERIC.has(c.type) ? ' class="n"' : ''}>${c.render ? c.render(r) : esc(fmt(c, r[c.k]))}</td>`).join('')}</tr>`).join('')
   }</tbody></table></div>`;
 }
 const pick = (cols, keys) => cols.filter((c) => keys.includes(c.k));

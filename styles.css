@@ -125,7 +125,7 @@ td.vacio { text-align: center; color: var(--texto-2); padding: 40px; cursor: def
 
 .modal { position: fixed; inset: 0; background: rgba(20,22,30,.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
 .modal[hidden] { display: none; }
-.modal-box { background: #fff; border-radius: 12px; width: min(560px, 100%); max-height: 92vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+.modal-box { background: #fff; border-radius: 12px; width: min(560px, 100%); min-width: 0; max-height: 92vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
 .modal-wide { width: min(1100px, 100%); }
 .modal-head { background: var(--rojo); color: #fff; padding: 12px 18px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { margin: 0; font-size: 16px; }
@@ -173,9 +173,96 @@ td.vacio { text-align: center; color: var(--texto-2); padding: 40px; cursor: def
 .hojas label.con-error { border-color: var(--rojo); background: var(--rojo-suave); }
 td.comentario { max-width: 520px; }
 
-@media (max-width: 720px) {
-  .topbar, main { padding-left: 16px; padding-right: 16px; }
-  .tabs { padding: 0 16px; }
-  .filtros label { max-width: none; }
-  .table-wrap { max-height: none; }
+/* ===== Responsivo: PC (> 1024), tablet (701–1024), celular (≤ 700) ===== */
+.solo-movil, .btn-filtros, .orden-movil { display: none; }
+.tabs { position: sticky; top: 0; z-index: 20; }
+.usuario span { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-filtros {
+  border: 1px solid var(--borde); background: #fff; color: var(--texto); border-radius: 7px; padding: 7px 12px;
+  font-weight: 600; cursor: pointer; align-self: flex-end;
+}
+.filtros.abierto .btn-filtros { border-color: var(--rojo); color: var(--rojo); }
+.orden-movil { border: 1px solid var(--borde); border-radius: 6px; padding: 5px 8px; background: #fff; color: var(--texto); }
+
+/* Tablet */
+@media (max-width: 1024px) {
+  .topbar { padding: 12px 16px; gap: 10px 16px; }
+  .carga-info { order: 3; flex-basis: 100%; font-size: 12px; }
+  .top-actions { margin-left: auto; align-items: center; }
+  .tabs { padding: 0 8px; }
+  main { padding: 14px 16px 32px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .kpi .v { font-size: 18px; }
+  .btn-filtros { display: inline-block; }
+  .filtros label { max-width: none; flex: 1 1 calc(33% - 12px); }
+  .filtros label.f-wide { flex: 1 1 200px; }
+  .filtros:not(.abierto) label:not(.f-wide), .filtros:not(.abierto) .btn-ghost-dark { display: none; }
+  .table-wrap { max-height: 70vh; }
+  .modal-wide { width: 100%; }
+}
+
+/* Celular: las tablas se vuelven tarjetas */
+@media (max-width: 700px) {
+  body { font-size: 14px; }
+  .solo-amplio { display: none; }
+  .solo-movil { display: inline; }
+  .brand p { display: none; }
+  .brand h1 { font-size: 17px; }
+  .logo { width: 34px; height: 34px; font-size: 19px; }
+  .top-actions { gap: 6px; }
+  .top-actions .btn { padding: 7px 10px; }
+  .usuario span { max-width: 110px; }
+  .tab { padding: 11px 10px; font-size: 13px; }
+  main { padding: 12px 10px 28px; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; }
+  .kpi { padding: 8px 10px; }
+  .kpi .l { font-size: 11px; }
+  .kpi .v { font-size: 15px; }
+  .filtros { padding: 10px; gap: 8px; margin-bottom: 10px; }
+  .filtros label { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  .filtros label.f-wide { flex: 1 1 100%; }
+  .filtros .btn-filtros { flex: 1 1 auto; }
+  .filtros.abierto .btn-ghost-dark { flex: 1 1 100%; }
+
+  .table-card { background: transparent; border: 0; }
+  .table-toolbar { padding: 4px 2px 10px; gap: 8px; flex-wrap: nowrap; }
+  .table-toolbar > span { font-size: 12px; }
+  .orden-movil { display: inline-block; flex: 1 1 auto; min-width: 0; }
+  .carga-info { font-size: 11.5px; padding: 6px 10px; }
+  .table-wrap, .mini-wrap { max-height: none; min-height: 0; overflow: visible; border: 0; }
+  .table-wrap thead, .mini-wrap thead { display: none; }
+  .table-wrap table, .table-wrap tbody, .mini-wrap table, .mini-wrap tbody { display: block; }
+  .table-wrap tbody tr, .mini-wrap tbody tr {
+    display: block; background: #fff; border: 1px solid var(--borde); border-left: 4px solid var(--rojo);
+    border-radius: 10px; margin-bottom: 10px; padding: 8px 12px;
+  }
+  .table-wrap tbody td, .mini-wrap tbody td {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border: 0; padding: 3px 0;
+    white-space: normal; max-width: none; overflow-wrap: anywhere; text-align: right; background: none !important;
+  }
+  .table-wrap tbody td::before, .mini-wrap tbody td::before {
+    content: attr(data-label); flex: 0 0 38%; text-align: left; color: var(--texto-2); font-size: 12px; font-weight: 500;
+  }
+  .table-wrap tbody td.no-movil { display: none; }
+  .table-wrap tbody td.titulo { display: block; text-align: left; font-weight: 700; font-size: 15px; padding-bottom: 4px; }
+  .table-wrap tbody td.titulo::before { display: none; }
+  .table-wrap tbody td.comentario { display: block; text-align: left; font-size: 13px; }
+  .table-wrap tbody td.comentario::before { display: block; margin-bottom: 2px; }
+  .table-wrap tbody td.vacio { display: block; text-align: center; }
+  .table-wrap tbody td.vacio::before { display: none; }
+  .pager { justify-content: center; border-top: 0; padding: 4px 0 8px; }
+  .pager > span:first-child, .pager > select { display: none; }
+  .pager button { padding: 6px 12px; }
+
+  .modal { padding: 0; display: flex; flex-direction: column; }
+  .modal-box, .modal-wide { flex: 1 1 0; width: 100%; max-height: none; min-height: 0; border-radius: 0; }
+  .modal-head { border-radius: 0; }
+  .modal-body { flex: 1; min-height: 0; padding: 12px; }
+  .modal-foot .btn { flex: 1; }
+  .det-grid { grid-template-columns: repeat(2, 1fr); gap: 6px 12px; }
+  .det-grid .v { font-size: 13px; }
+  .progress { height: auto; min-height: 22px; }
+  .progress span { position: relative; padding: 3px 6px; font-size: 11px; }
+  .progress .bar { position: absolute; inset: 0 auto 0 0; }
+  .login-box { padding: 20px 16px; }
 }
