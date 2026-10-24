@@ -1,0 +1,5 @@
+*.xlsx
+*.XLSX
+*.csv
+clave_carga.txt
+.vercel

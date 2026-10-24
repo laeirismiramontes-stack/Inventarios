@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inventarios Kuroda</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">K</div>
+      <div>
+        <h1>Inventarios Kuroda</h1>
+        <p>Compras y destino del material · KN05 Mexicali</p>
+      </div>
+    </div>
+    <div class="carga-info" id="cargaInfo">Cargando…</div>
+    <div class="top-actions">
+      <button class="btn btn-ghost" id="btnRecargar" title="Volver a leer los datos">↻ Refrescar</button>
+      <button class="btn btn-light" id="btnActualizar">⬆ Actualizar base de datos</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="compras">Compras · ¿Para quién?</button>
+    <button class="tab" data-tab="inventario">Inventario actual</button>
+    <button class="tab" data-tab="cargas">Historial de cargas</button>
+  </nav>
+
+  <main>
+    <section id="tab-compras" class="panel active">
+      <div class="kpis" id="kpisCompras"></div>
+      <div class="filtros card">
+        <label class="f-wide">Buscar<input type="search" id="fcBuscar" placeholder="OC, material, cliente, vendedor, texto…"></label>
+        <label>Desde<input type="date" id="fcDesde"></label>
+        <label>Hasta<input type="date" id="fcHasta"></label>
+        <label>Destino<select id="fcDestino"></select></label>
+        <label>Comprador<select id="fcUsuario"></select></label>
+        <label>Motivo<select id="fcMotivo"></select></label>
+        <label>Proveedor<select id="fcProveedor"></select></label>
+        <label>Referencia<select id="fcReferencia"></select></label>
+        <label>Recepción<select id="fcEstado"></select></label>
+        <button class="btn btn-ghost-dark" id="fcLimpiar">Limpiar filtros</button>
+      </div>
+      <div class="card table-card">
+        <div class="table-toolbar">
+          <span id="infoCompras"></span>
+          <button class="btn btn-small" id="expCompras">Exportar CSV</button>
+        </div>
+        <div class="table-wrap"><table id="tblCompras"></table></div>
+        <div class="pager" id="pagCompras"></div>
+      </div>
+    </section>
+
+    <section id="tab-inventario" class="panel">
+      <div class="kpis" id="kpisInv"></div>
+      <div class="filtros card">
+        <label class="f-wide">Buscar<input type="search" id="fiBuscar" placeholder="Código, descripción, proveedor…"></label>
+        <label>Grupo<select id="fiGrupo"></select></label>
+        <label>Proveedor<select id="fiProveedor"></select></label>
+        <label>ABC<select id="fiAbc"></select></label>
+        <label>Compras feb–hoy<select id="fiCompras"></select></label>
+        <label>Existencia<select id="fiExistencia"></select></label>
+        <button class="btn btn-ghost-dark" id="fiLimpiar">Limpiar filtros</button>
+      </div>
+      <div class="card table-card">
+        <div class="table-toolbar">
+          <span id="infoInv"></span>
+          <button class="btn btn-small" id="expInv">Exportar CSV</button>
+        </div>
+        <div class="table-wrap"><table id="tblInv"></table></div>
+        <div class="pager" id="pagInv"></div>
+      </div>
+    </section>
+
+    <section id="tab-cargas" class="panel">
+      <div class="card table-card">
+        <div class="table-toolbar"><span>Cada carga queda registrada aquí. Las compras se agregan o actualizan por Orden de Compra + Renglón; el inventario se reemplaza completo.</span></div>
+        <div class="table-wrap"><table id="tblCargas"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal de carga -->
+  <div class="modal" id="modalCarga" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><h2>Actualizar base de datos</h2><button class="x" data-close>×</button></div>
+      <div class="modal-body">
+        <p class="hint" id="hintCarga"></p>
+        <label class="field">Archivo de Excel (.xlsx)
+          <input type="file" id="archivo" accept=".xlsx,.xls,.xlsm">
+        </label>
+        <div id="hojas" class="hojas"></div>
+        <label class="field">Clave de carga
+          <input type="password" id="clave" autocomplete="off" placeholder="Clave para subir información">
+        </label>
+        <div class="progress" hidden id="progreso"><div class="bar" id="barra"></div><span id="progTxt"></span></div>
+        <div class="msg" id="msgCarga"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost-dark" data-close>Cancelar</button>
+        <button class="btn btn-primary" id="btnSubir" disabled>Subir información</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de detalle -->
+  <div class="modal" id="modalDetalle" hidden>
+    <div class="modal-box modal-wide">
+      <div class="modal-head"><h2 id="detTitulo">Detalle</h2><button class="x" data-close>×</button></div>
+      <div class="modal-body" id="detCuerpo"></div>
+    </div>
+  </div>
+</body>
+</html>
