@@ -7,61 +7,58 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="config.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
+  <!-- Login -->
+  <div class="login" id="login">
+    <form class="login-box" id="loginForm">
+      <div class="login-head"><div class="logo">K</div><div><h1>Inventarios Kuroda</h1><p>Inicia sesión con tu correo</p></div></div>
+      <label class="field">Correo<input type="email" id="lgEmail" autocomplete="username" required></label>
+      <label class="field" id="lgPassWrap">Contraseña<input type="password" id="lgPass" autocomplete="current-password" minlength="6"></label>
+      <div class="msg" id="lgMsg"></div>
+      <button class="btn btn-primary btn-block" id="lgEntrar" type="submit">Entrar</button>
+      <div class="login-links">
+        <button type="button" class="link" id="lgCrear">Crear cuenta</button>
+        <button type="button" class="link" id="lgOlvide">Olvidé mi contraseña</button>
+      </div>
+      <p class="login-note">Solo los correos dados de alta pueden ver la información.</p>
+    </form>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <div class="logo">K</div>
       <div>
         <h1>Inventarios Kuroda</h1>
-        <p>Compras y destino del material · KN05 Mexicali</p>
+        <p>Compras, ventas y destino del material · KN05 Mexicali</p>
       </div>
     </div>
     <div class="carga-info" id="cargaInfo">Cargando…</div>
     <div class="top-actions">
       <button class="btn btn-ghost" id="btnRecargar" title="Volver a leer los datos">↻ Refrescar</button>
-      <button class="btn btn-light" id="btnActualizar">⬆ Actualizar base de datos</button>
+      <button class="btn btn-light" id="btnActualizar" hidden>⬆ Actualizar base de datos</button>
+      <div class="usuario"><span id="usuarioEmail"></span><button class="link link-light" id="btnSalir">Salir</button></div>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="compras">Compras · ¿Para quién?</button>
-    <button class="tab" data-tab="inventario">Inventario actual</button>
+    <button class="tab active" data-tab="inventario">Inventario actual</button>
+    <button class="tab" data-tab="compras">Compras · ¿Para quién?</button>
+    <button class="tab" data-tab="ventas">Ventas</button>
     <button class="tab" data-tab="cargas">Historial de cargas</button>
   </nav>
 
   <main>
-    <section id="tab-compras" class="panel active">
-      <div class="kpis" id="kpisCompras"></div>
-      <div class="filtros card">
-        <label class="f-wide">Buscar<input type="search" id="fcBuscar" placeholder="OC, material, cliente, vendedor, texto…"></label>
-        <label>Desde<input type="date" id="fcDesde"></label>
-        <label>Hasta<input type="date" id="fcHasta"></label>
-        <label>Destino<select id="fcDestino"></select></label>
-        <label>Comprador<select id="fcUsuario"></select></label>
-        <label>Motivo<select id="fcMotivo"></select></label>
-        <label>Proveedor<select id="fcProveedor"></select></label>
-        <label>Referencia<select id="fcReferencia"></select></label>
-        <label>Recepción<select id="fcEstado"></select></label>
-        <button class="btn btn-ghost-dark" id="fcLimpiar">Limpiar filtros</button>
-      </div>
-      <div class="card table-card">
-        <div class="table-toolbar">
-          <span id="infoCompras"></span>
-          <button class="btn btn-small" id="expCompras">Exportar CSV</button>
-        </div>
-        <div class="table-wrap"><table id="tblCompras"></table></div>
-        <div class="pager" id="pagCompras"></div>
-      </div>
-    </section>
-
-    <section id="tab-inventario" class="panel">
+    <section id="tab-inventario" class="panel active">
       <div class="kpis" id="kpisInv"></div>
       <div class="filtros card">
-        <label class="f-wide">Buscar<input type="search" id="fiBuscar" placeholder="Código, descripción, proveedor…"></label>
+        <label class="f-wide">Buscar<input type="search" id="fiBuscar" placeholder="Código, descripción, proveedor, comentario, cliente…"></label>
+        <label>Destino última compra<select id="fiDestino"></select></label>
+        <label>Mes última compra<select id="fiMes"></select></label>
         <label>Grupo<select id="fiGrupo"></select></label>
         <label>Proveedor<select id="fiProveedor"></select></label>
         <label>ABC<select id="fiAbc"></select></label>
@@ -79,9 +76,56 @@
       </div>
     </section>
 
+    <section id="tab-compras" class="panel">
+      <div class="kpis" id="kpisCompras"></div>
+      <div class="filtros card">
+        <label class="f-wide">Buscar<input type="search" id="fcBuscar" placeholder="OC, material, cliente, vendedor, texto…"></label>
+        <label>Mes<select id="fcMes"></select></label>
+        <label>Desde<input type="date" id="fcDesde"></label>
+        <label>Hasta<input type="date" id="fcHasta"></label>
+        <label>Destino<select id="fcDestino"></select></label>
+        <label>Vendedor (OC)<select id="fcVendedor"></select></label>
+        <label>Comprador<select id="fcUsuario"></select></label>
+        <label>Motivo<select id="fcMotivo"></select></label>
+        <label>Proveedor<select id="fcProveedor"></select></label>
+        <label>Referencia<select id="fcReferencia"></select></label>
+        <label>Recepción<select id="fcEstado"></select></label>
+        <button class="btn btn-ghost-dark" id="fcLimpiar">Limpiar filtros</button>
+      </div>
+      <div class="card table-card">
+        <div class="table-toolbar">
+          <span id="infoCompras"></span>
+          <button class="btn btn-small" id="expCompras">Exportar CSV</button>
+        </div>
+        <div class="table-wrap"><table id="tblCompras"></table></div>
+        <div class="pager" id="pagCompras"></div>
+      </div>
+    </section>
+
+    <section id="tab-ventas" class="panel">
+      <div class="kpis" id="kpisVentas"></div>
+      <div class="filtros card">
+        <label class="f-wide">Buscar<input type="search" id="fvBuscar" placeholder="Folio, material, cliente, vendedor…"></label>
+        <label>Mes<select id="fvMes"></select></label>
+        <label>Desde<input type="date" id="fvDesde"></label>
+        <label>Hasta<input type="date" id="fvHasta"></label>
+        <label>Vendedor<select id="fvVendedor"></select></label>
+        <label>Canal<select id="fvCanal"></select></label>
+        <button class="btn btn-ghost-dark" id="fvLimpiar">Limpiar filtros</button>
+      </div>
+      <div class="card table-card">
+        <div class="table-toolbar">
+          <span id="infoVentas"></span>
+          <button class="btn btn-small" id="expVentas">Exportar CSV</button>
+        </div>
+        <div class="table-wrap"><table id="tblVentas"></table></div>
+        <div class="pager" id="pagVentas"></div>
+      </div>
+    </section>
+
     <section id="tab-cargas" class="panel">
       <div class="card table-card">
-        <div class="table-toolbar"><span>Cada carga queda registrada aquí. Las compras se agregan o actualizan por Orden de Compra + Renglón; el inventario se reemplaza completo.</span></div>
+        <div class="table-toolbar"><span>Compras: se agregan o actualizan por Orden de Compra + Renglón. Inventario: se reemplaza completo. Ventas: se reemplazan los días que trae el archivo.</span></div>
         <div class="table-wrap"><table id="tblCargas"></table></div>
       </div>
     </section>
@@ -97,9 +141,6 @@
           <input type="file" id="archivo" accept=".xlsx,.xls,.xlsm">
         </label>
         <div id="hojas" class="hojas"></div>
-        <label class="field">Clave de carga
-          <input type="password" id="clave" autocomplete="off" placeholder="Clave para subir información">
-        </label>
         <div class="progress" hidden id="progreso"><div class="bar" id="barra"></div><span id="progTxt"></span></div>
         <div class="msg" id="msgCarga"></div>
       </div>

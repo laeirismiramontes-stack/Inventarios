@@ -152,6 +152,23 @@ td.vacio { text-align: center; color: var(--texto-2); padding: 40px; cursor: def
 .mini-wrap { overflow: auto; max-height: 50vh; border: 1px solid var(--borde); border-radius: 8px; }
 .mini-wrap thead th { cursor: default; }
 
+.login { position: fixed; inset: 0; z-index: 100; background: var(--fondo); display: grid; place-items: center; padding: 16px; }
+.login[hidden] { display: none; }
+.login-box { background: #fff; border: 1px solid var(--borde); border-top: 6px solid var(--rojo); border-radius: 12px; padding: 24px; width: min(400px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.08); }
+.login-head { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
+.login-head .logo { background: var(--rojo); color: #fff; }
+.login-head h1 { margin: 0; font-size: 19px; }
+.login-head p { margin: 0; color: var(--texto-2); font-size: 13px; }
+.btn-block { width: 100%; margin-top: 4px; }
+.login-links { display: flex; justify-content: space-between; margin-top: 12px; }
+.login-note { font-size: 12px; color: var(--texto-2); margin: 14px 0 0; }
+.link { background: none; border: 0; color: var(--rojo); cursor: pointer; padding: 0; font-weight: 500; }
+.link:hover { text-decoration: underline; }
+.link-light { color: #fff; }
+.usuario { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; gap: 2px; }
+.msg { margin-bottom: 8px; }
+td.comentario { max-width: 520px; }
+
 @media (max-width: 720px) {
   .topbar, main { padding-left: 16px; padding-right: 16px; }
   .tabs { padding: 0 16px; }

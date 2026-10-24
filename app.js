@@ -1,14 +1,16 @@
 'use strict';
 
 const { SUPABASE_URL, SUPABASE_KEY } = window.APP_CONFIG;
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (s) => document.querySelector(s);
 const LOTE = 500;
+let token = null;
 
 // ---------- API ----------
 async function api(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...opts,
-    headers: { apikey: SUPABASE_KEY, ...(opts.headers || {}) },
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token || SUPABASE_KEY}`, ...(opts.headers || {}) },
   });
   if (!res.ok) {
     let msg = res.statusText;
@@ -49,6 +51,9 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fDate = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : '');
 const fDateTime = (t) => (t ? new Date(t).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '');
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const mesDe = (d) => (d ? `${MESES[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}` : null);
+const ordenMes = (m) => { const [n, y] = m.split(' '); return Number(y) * 100 + MESES.indexOf(n); };
 
 function fmt(col, v) {
   if (v === null || v === undefined || v === '') return '';
@@ -63,46 +68,10 @@ function fmt(col, v) {
 }
 const NUMERIC = new Set(['money', 'int', 'num']);
 
-// ---------- Destino ("¿para quién?") ----------
-// Se deduce del Texto de Cabecera de la OC. Textos como "POS.1 A 3 VENTA ANGEL TICKET 501… RESTO STOCK"
-// indican que solo esas posiciones (renglones) son para la venta y el resto es para stock.
-const RE_VENTA = /\b(venta|vta|ventas|cliente|obra|promesa|vendedor|ticket|fact|factura)\b|\bpedido\s*\d/;
-const RE_STOCK = /(stock|reorden|resurt|menudeo|proteccion)/;
-
-function posicionesMencionadas(t) {
-  const set = new Set();
-  const re = /\bpos(?:icion(?:es)?)?\.?\s*(\d{1,3})((?:\s*(?:a|al|-|y|,)\s*\d{1,3}\b)*)/g;
-  let m;
-  while ((m = re.exec(t))) {
-    let prev = Number(m[1]);
-    set.add(prev);
-    const tokRe = /\s*(a|al|-|y|,)\s*(\d{1,3})/g;
-    let tk;
-    while ((tk = tokRe.exec(m[2]))) {
-      const n = Number(tk[2]);
-      if (tk[1] === 'a' || tk[1] === 'al' || tk[1] === '-') { for (let i = prev; i <= n && i - prev < 500; i++) set.add(i); } else set.add(n);
-      prev = n;
-    }
-  }
-  return set;
-}
-
-function clasificarDestino(r) {
-  const t = norm(r.texto_cabecera || '');
-  const ref = norm(r.nuestra_referencia || '');
-  const venta = RE_VENTA.test(t) || /\b5\d{8,9}\b/.test(`${t} ${ref}`)
-    || r.motivo_pedido === 'C11' || r.motivo_pedido === 'C12';
-  if (venta) {
-    const pos = posicionesMencionadas(t);
-    if (pos.size && !pos.has(Number(r.numero_renglon))) return RE_STOCK.test(t) ? 'Stock' : 'Otro';
-    return 'Venta / Cliente';
-  }
-  if ((!t.trim() && (!ref || RE_STOCK.test(ref))) || RE_STOCK.test(t)) return 'Stock';
-  return 'Otro';
-}
-// Números de ticket / pedido de venta citados en el texto (p. ej. 501117036, 5000985311)
-const documentosVenta = (r) => [...new Set((r.texto_cabecera || '').match(/\b5\d{8,9}\b/g) || [])].join(', ');
+// El destino de cada renglón ("Venta / Cliente", "Stock", "Otro") se calcula en la base
+// (vista compras_destino, función f_destino) a partir del Texto de Cabecera de la OC.
 function badgeDestino(d) {
+  if (!d) return '';
   const cls = d === 'Venta / Cliente' ? 'b-venta' : d === 'Stock' ? 'b-stock' : 'b-otro';
   return `<span class="badge ${cls}">${esc(d)}</span>`;
 }
@@ -167,24 +136,25 @@ class Tabla {
         return { '>': n > x, '<': n < x, '>=': n >= x, '<=': n <= x, '=': n === x }[m[1]];
       }
     }
-    const shown = c.text ? c.text(v) : fmt(c, v);
-    return norm(shown).includes(norm(f)) || norm(v).includes(norm(f));
+    return norm(fmt(c, v)).includes(norm(f)) || norm(v).includes(norm(f));
   }
 
   apply() {
     const act = this.cols.filter((c) => this.colF[c.k]);
-    let rows = act.length
+    const rows = act.length
       ? this.base.filter((r) => act.every((c) => this.match(c, r[c.k], this.colF[c.k])))
       : this.base.slice();
     if (this.sort) {
       const { k, dir } = this.sort;
       const col = this.cols.find((c) => c.k === k);
       const num = NUMERIC.has(col.type);
+      const key = col.sortKey || ((v) => v);
       rows.sort((a, b) => {
         const x = a[k]; const y = b[k];
         if (x == null || x === '') return 1;
         if (y == null || y === '') return -1;
-        return (num ? x - y : String(x).localeCompare(String(y), 'es', { numeric: true })) * dir;
+        const kx = key(x); const ky = key(y);
+        return (num || typeof kx === 'number' ? kx - ky : String(kx).localeCompare(String(ky), 'es', { numeric: true })) * dir;
       });
     }
     this.rows = rows;
@@ -204,7 +174,8 @@ class Tabla {
       ? slice.map((r, i) => `<tr data-i="${start + i}">${this.cols.map((c) => {
         const html = c.render ? c.render(r) : esc(fmt(c, r[c.k]));
         const title = c.render ? '' : ` title="${esc(fmt(c, r[c.k]))}"`;
-        return `<td${NUMERIC.has(c.type) ? ' class="n"' : ''}${title}>${html}</td>`;
+        const cls = [NUMERIC.has(c.type) ? 'n' : '', c.cls || ''].filter(Boolean).join(' ');
+        return `<td${cls ? ` class="${cls}"` : ''}${title}>${html}</td>`;
       }).join('')}</tr>`).join('')
       : `<tr><td class="vacio" colspan="${this.cols.length}">Sin resultados con los filtros actuales</td></tr>`;
 
@@ -228,7 +199,7 @@ class Tabla {
     const lines = [this.cols.map((c) => q(c.t)).join(',')];
     this.rows.forEach((r) => lines.push(this.cols.map((c) => {
       const v = r[c.k];
-      return NUMERIC.has(c.type) ? (v ?? '') : q(c.text ? c.text(v) : fmt(c, v));
+      return NUMERIC.has(c.type) ? (v ?? '') : q(fmt(c, v));
     }).join(',')));
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
@@ -263,13 +234,17 @@ const TIPOS_COMPRA = {
   costo_unitario_pedido: 'money', costo_pedido: 'money', costo_entrada: 'money', costo_pendiente: 'money',
 };
 
+const COL_MES = (k) => ({ k, t: 'Mes', sortKey: ordenMes });
+
 const COLS_COMPRAS = [
   { k: 'fecha_orden', t: 'Fecha OC', type: 'date' },
+  COL_MES('_mes'),
   { k: 'orden_compra', t: 'Orden de compra' },
   { k: 'numero_renglon', t: 'Ren.', type: 'int' },
-  { k: '_destino', t: 'Destino', render: (r) => badgeDestino(r._destino) },
+  { k: 'destino', t: 'Destino', render: (r) => badgeDestino(r.destino) },
+  { k: 'vendedor_oc', t: 'Vendedor (OC)' },
   { k: 'texto_cabecera', t: 'Para quién (texto cabecera)' },
-  { k: '_documento', t: 'Ticket / pedido venta' },
+  { k: 'documento_venta', t: 'Ticket / pedido venta' },
   { k: 'nuestra_referencia', t: 'Nuestra ref.' },
   { k: 'referencia', t: 'Referencia' },
   { k: 'solicitante_oc', t: 'Solicitante' },
@@ -289,10 +264,10 @@ const COLS_COMPRAS = [
   { k: '_existencia', t: 'Existencia hoy', type: 'num' },
 ];
 const SELECT_COMPRAS = [
-  'orden_compra', 'numero_renglon', 'fecha_orden', 'periodo', 'texto_cabecera', 'nuestra_referencia', 'referencia', 'solicitante_oc',
+  'orden_compra', 'numero_renglon', 'fecha_orden', 'texto_cabecera', 'nuestra_referencia', 'referencia', 'solicitante_oc',
   'nombre_usuario', 'motivo_pedido', 'descripcion_motivo_pedido', 'nombre_proveedor', 'codigo_material', 'descripcion_material',
   'cantidad_pedida', 'cantidad_entrada', 'cantidad_pendiente', 'unidad_medida_pedido', 'costo_pedido', 'costo_pendiente',
-  'fecha_estimada_llegada', 'fecha_ultima_entrada', 'estatus_posicion',
+  'fecha_estimada_llegada', 'fecha_ultima_entrada', 'destino', 'documento_venta', 'vendedor_oc',
 ].join(',');
 
 const COLS_INV = [
@@ -300,6 +275,22 @@ const COLS_INV = [
   { k: 'almacen', t: 'Almacén' },
   { k: 'codigo_material', t: 'Código material' },
   { k: 'descripcion_material', t: 'Descripción' },
+  { k: 'cantidad_propia', t: 'Cantidad', type: 'num' },
+  { k: 'unidad_medida_base', t: 'UM' },
+  { k: '_destino', t: 'Destino última compra', render: (r) => badgeDestino(r._destino) },
+  { k: '_comentario', t: 'Comentario', cls: 'comentario' },
+  { k: '_ultFecha', t: 'Última compra', type: 'date' },
+  COL_MES('_ultMes'),
+  { k: '_ultOC', t: 'Última OC' },
+  { k: '_cliente', t: 'Cliente (factura)' },
+  { k: '_vendedor', t: 'Vendedor' },
+  { k: '_vendido', t: 'Vendido desde última OC', type: 'num' },
+  { k: '_nCompras', t: 'Renglones comprados', type: 'int' },
+  { k: '_pedido', t: 'Cant. comprada', type: 'num' },
+  { k: '_pendiente', t: 'Pendiente recibir', type: 'num' },
+  { k: 'importe_inventario_propio', t: 'Importe inventario', type: 'money' },
+  { k: 'costo_reposicion_unitario', t: 'Costo reposición', type: 'money' },
+  { k: 'costo_promedio_unitario', t: 'Costo promedio', type: 'money' },
   { k: 'clave_proveedor_material', t: 'Clave proveedor' },
   { k: 'numero_proveedor', t: 'Núm. proveedor' },
   { k: 'nombre_proveedor', t: 'Proveedor' },
@@ -308,19 +299,25 @@ const COLS_INV = [
   { k: 'grupo_articulos_externo', t: 'Grupo art. externo' },
   { k: 'indicador_abc_actual', t: 'ABC' },
   { k: 'indicador_abc_frecuencia', t: 'ABC+Frec.' },
-  { k: 'cantidad_propia', t: 'Cantidad', type: 'num' },
-  { k: 'unidad_medida_base', t: 'UM' },
-  { k: 'importe_inventario_propio', t: 'Importe inventario', type: 'money' },
-  { k: 'costo_reposicion_unitario', t: 'Costo reposición', type: 'money' },
-  { k: 'costo_promedio_unitario', t: 'Costo promedio', type: 'money' },
-  { k: '_nCompras', t: 'Renglones comprados', type: 'int' },
-  { k: '_pedido', t: 'Cant. comprada', type: 'num' },
-  { k: '_pendiente', t: 'Pendiente recibir', type: 'num' },
-  { k: '_ultFecha', t: 'Última compra', type: 'date' },
-  { k: '_ultDestino', t: 'Último destino', render: (r) => (r._ultDestino ? badgeDestino(r._ultDestino) : '') },
-  { k: '_ultPara', t: 'Última compra para' },
 ];
 const LABELS_INV = Object.fromEntries(COLS_INV.filter((c) => !c.k.startsWith('_')).map((c) => [c.k, c.t]));
+
+const COLS_VENTAS = [
+  { k: 'fecha_factura', t: 'Fecha factura', type: 'date' },
+  COL_MES('_mes'),
+  { k: 'folio_factura', t: 'Folio' },
+  { k: 'codigo_material', t: 'Material' },
+  { k: 'descripcion_material', t: 'Descripción' },
+  { k: 'cantidad_facturada', t: 'Cantidad', type: 'num' },
+  { k: 'nombre_cliente', t: 'Cliente' },
+  { k: 'nombre_vendedor', t: 'Vendedor' },
+  { k: 'numero_vendedor', t: 'Núm. vendedor' },
+  { k: 'canal_distribucion', t: 'Canal' },
+  { k: 'indicador_abc_frecuencia', t: 'ABC+Frec.' },
+  { k: 'existencia_centro', t: 'Existencia centro', type: 'num' },
+  { k: 'importe_venta', t: 'Importe venta', type: 'money' },
+  { k: 'costo_ventas', t: 'Costo de ventas', type: 'money' },
+];
 
 const COLS_CARGAS = [
   { k: 'id', t: 'Carga #', type: 'int' },
@@ -331,19 +328,25 @@ const COLS_CARGAS = [
   { k: 'registros_compras', t: 'Compras procesadas', type: 'int' },
   { k: 'compras_nuevas', t: 'Compras nuevas', type: 'int' },
   { k: 'compras_actualizadas', t: 'Compras actualizadas', type: 'int' },
+  { k: 'registros_ventas', t: 'Renglones ventas', type: 'int' },
   { k: 'fecha_max_orden', t: 'OC más reciente en base', type: 'date' },
 ];
 
 // ---------- Estado ----------
-const S = { compras: [], inv: [], cargas: [], invPorMaterial: new Map(), comprasPorMaterial: new Map() };
+const S = { compras: [], inv: [], ventas: [], cargas: [], invPorMaterial: new Map(), comprasPorMaterial: new Map(), ventasPorMaterial: new Map() };
 
+const tInv = new Tabla({
+  el: '#tblInv', pager: '#pagInv', info: '#infoInv', cols: COLS_INV, nombre: 'inventario',
+  onRow: (r) => detalleMaterial(r), onFiltered: (rows) => kpisInv(rows),
+});
 const tCompras = new Tabla({
   el: '#tblCompras', pager: '#pagCompras', info: '#infoCompras', cols: COLS_COMPRAS, nombre: 'compras',
   onRow: (r) => detalleCompra(r), onFiltered: (rows) => kpisCompras(rows),
 });
-const tInv = new Tabla({
-  el: '#tblInv', pager: '#pagInv', info: '#infoInv', cols: COLS_INV, nombre: 'inventario',
-  onRow: (r) => detalleMaterial(r), onFiltered: (rows) => kpisInv(rows),
+const tVentas = new Tabla({
+  el: '#tblVentas', pager: '#pagVentas', info: '#infoVentas', cols: COLS_VENTAS, nombre: 'ventas',
+  onRow: (r) => { const i = S.inv.find((x) => x.codigo_material === r.codigo_material); if (i) detalleMaterial(i); },
+  onFiltered: (rows) => kpisVentas(rows),
 });
 const tCargas = new Tabla({ el: '#tblCargas', cols: COLS_CARGAS, pageSize: 1000, nombre: 'cargas' });
 
@@ -352,43 +355,57 @@ function sum(rows, k) { return rows.reduce((a, r) => a + (Number(r[k]) || 0), 0)
 
 function kpisCompras(rows) {
   const ocs = new Set(rows.map((r) => r.orden_compra)).size;
-  const venta = rows.filter((r) => r._destino === 'Venta / Cliente').length;
+  const venta = rows.filter((r) => r.destino === 'Venta / Cliente').length;
   $('#kpisCompras').innerHTML = kpi('Renglones', nf0.format(rows.length)) + kpi('Órdenes de compra', nf0.format(ocs))
     + kpi('Importe pedido', mf.format(sum(rows, 'costo_pedido'))) + kpi('Importe pendiente de recibir', mf.format(sum(rows, 'costo_pendiente')))
     + kpi('Renglones para venta / cliente', nf0.format(venta));
 }
 function kpisInv(rows) {
   $('#kpisInv').innerHTML = kpi('Renglones de inventario', nf0.format(rows.length))
-    + kpi('Materiales distintos', nf0.format(new Set(rows.map((r) => r.codigo_material)).size))
     + kpi('Importe de inventario', mf.format(sum(rows, 'importe_inventario_propio')))
-    + kpi('Con compras feb–hoy', nf0.format(rows.filter((r) => r._nCompras > 0).length))
-    + kpi('Pendiente por recibir', nf0.format(rows.filter((r) => r._pendiente > 0).length));
+    + kpi('Última compra para stock', nf0.format(rows.filter((r) => r._destino === 'Stock').length))
+    + kpi('Última compra para venta / cliente', nf0.format(rows.filter((r) => r._destino === 'Venta / Cliente').length))
+    + kpi('Sin compras feb–hoy', nf0.format(rows.filter((r) => !r._nCompras).length));
+}
+function kpisVentas(rows) {
+  $('#kpisVentas').innerHTML = kpi('Renglones', nf0.format(rows.length))
+    + kpi('Facturas', nf0.format(new Set(rows.map((r) => r.folio_factura)).size))
+    + kpi('Importe de venta', mf.format(sum(rows, 'importe_venta')))
+    + kpi('Costo de ventas', mf.format(sum(rows, 'costo_ventas')))
+    + kpi('Clientes', nf0.format(new Set(rows.map((r) => r.nombre_cliente)).size));
 }
 
 // ---------- Filtros superiores ----------
-function opciones(sel, valores, todos = 'Todos') {
+function opciones(sel, valores, { todos = 'Todos', orden } = {}) {
   const actual = sel.value;
-  const uniq = [...new Set(valores.filter((v) => v !== null && v !== undefined && v !== ''))].sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  const uniq = [...new Set(valores.filter((v) => v !== null && v !== undefined && v !== ''))]
+    .sort(orden || ((a, b) => String(a).localeCompare(String(b), 'es')));
   sel.innerHTML = `<option value="">${todos}</option>` + uniq.map((v) => `<option ${v === actual ? 'selected' : ''}>${esc(v)}</option>`).join('');
 }
+const opcionesMes = (sel, valores) => opciones(sel, valores, { orden: (a, b) => ordenMes(a) - ordenMes(b) });
 function opcionesFijas(sel, lista) { sel.innerHTML = lista.map(([v, t]) => `<option value="${v}">${t}</option>`).join(''); }
 
 opcionesFijas($('#fcEstado'), [['', 'Todos'], ['pend', 'Con pendiente por recibir'], ['comp', 'Recibido completo']]);
 opcionesFijas($('#fiCompras'), [['', 'Todos'], ['si', 'Con compras'], ['no', 'Sin compras'], ['pend', 'Con pendiente por recibir']]);
 opcionesFijas($('#fiExistencia'), [['', 'Todas'], ['con', 'Con existencia (> 0)'], ['sin', 'Sin existencia (≤ 0)']]);
 
+const palabras = (sel) => norm($(sel).value.trim()).split(/\s+/).filter(Boolean);
+function enRango(d, desde, hasta) {
+  if (desde && (!d || d < desde)) return false;
+  if (hasta && (!d || d > hasta)) return false;
+  return true;
+}
+
 function filtrarCompras() {
-  const q = norm($('#fcBuscar').value.trim());
-  const desde = $('#fcDesde').value; const hasta = $('#fcHasta').value;
+  const words = palabras('#fcBuscar');
   const f = {
-    _destino: $('#fcDestino').value, nombre_usuario: $('#fcUsuario').value, descripcion_motivo_pedido: $('#fcMotivo').value,
+    _mes: $('#fcMes').value, destino: $('#fcDestino').value, vendedor_oc: $('#fcVendedor').value,
+    nombre_usuario: $('#fcUsuario').value, descripcion_motivo_pedido: $('#fcMotivo').value,
     nombre_proveedor: $('#fcProveedor').value, referencia: $('#fcReferencia').value,
   };
-  const estado = $('#fcEstado').value;
-  const words = q.split(/\s+/).filter(Boolean);
+  const estado = $('#fcEstado').value; const desde = $('#fcDesde').value; const hasta = $('#fcHasta').value;
   tCompras.setRows(S.compras.filter((r) => {
-    if (desde && (!r.fecha_orden || r.fecha_orden < desde)) return false;
-    if (hasta && (!r.fecha_orden || r.fecha_orden > hasta)) return false;
+    if (!enRango(r.fecha_orden, desde, hasta)) return false;
     for (const k in f) if (f[k] && r[k] !== f[k]) return false;
     if (estado === 'pend' && !(r.cantidad_pendiente > 0)) return false;
     if (estado === 'comp' && r.cantidad_pendiente > 0) return false;
@@ -396,13 +413,14 @@ function filtrarCompras() {
   }));
 }
 function filtrarInv() {
-  const words = norm($('#fiBuscar').value.trim()).split(/\s+/).filter(Boolean);
-  const g = $('#fiGrupo').value; const p = $('#fiProveedor').value; const a = $('#fiAbc').value;
+  const words = palabras('#fiBuscar');
+  const f = {
+    _destino: $('#fiDestino').value, _ultMes: $('#fiMes').value, descrip_gpo_materiales: $('#fiGrupo').value,
+    nombre_proveedor: $('#fiProveedor').value, indicador_abc_actual: $('#fiAbc').value,
+  };
   const c = $('#fiCompras').value; const e = $('#fiExistencia').value;
   tInv.setRows(S.inv.filter((r) => {
-    if (g && r.descrip_gpo_materiales !== g) return false;
-    if (p && r.nombre_proveedor !== p) return false;
-    if (a && r.indicador_abc_actual !== a) return false;
+    for (const k in f) if (f[k] && r[k] !== f[k]) return false;
     if (c === 'si' && !r._nCompras) return false;
     if (c === 'no' && r._nCompras) return false;
     if (c === 'pend' && !(r._pendiente > 0)) return false;
@@ -411,23 +429,32 @@ function filtrarInv() {
     return words.every((w) => r._s.includes(w));
   }));
 }
+function filtrarVentas() {
+  const words = palabras('#fvBuscar');
+  const f = { _mes: $('#fvMes').value, nombre_vendedor: $('#fvVendedor').value, canal_distribucion: $('#fvCanal').value };
+  const desde = $('#fvDesde').value; const hasta = $('#fvHasta').value;
+  tVentas.setRows(S.ventas.filter((r) => {
+    if (!enRango(r.fecha_factura, desde, hasta)) return false;
+    for (const k in f) if (f[k] && r[k] !== f[k]) return false;
+    return words.every((w) => r._s.includes(w));
+  }));
+}
 
 function debounce(fn, ms = 200) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-['#fcBuscar'].forEach((s) => $(s).addEventListener('input', debounce(filtrarCompras)));
-['#fcDesde', '#fcHasta', '#fcDestino', '#fcUsuario', '#fcMotivo', '#fcProveedor', '#fcReferencia', '#fcEstado']
-  .forEach((s) => $(s).addEventListener('change', filtrarCompras));
-$('#fiBuscar').addEventListener('input', debounce(filtrarInv));
-['#fiGrupo', '#fiProveedor', '#fiAbc', '#fiCompras', '#fiExistencia'].forEach((s) => $(s).addEventListener('change', filtrarInv));
-$('#fcLimpiar').onclick = () => {
-  document.querySelectorAll('#tab-compras .filtros input, #tab-compras .filtros select').forEach((i) => { i.value = ''; });
-  tCompras.limpiarFiltrosColumna(); filtrarCompras();
-};
-$('#fiLimpiar').onclick = () => {
-  document.querySelectorAll('#tab-inventario .filtros input, #tab-inventario .filtros select').forEach((i) => { i.value = ''; });
-  tInv.limpiarFiltrosColumna(); filtrarInv();
-};
+function conectarFiltros(panel, buscar, fn, tabla) {
+  $(buscar).addEventListener('input', debounce(fn));
+  document.querySelectorAll(`${panel} .filtros select, ${panel} .filtros input[type=date]`).forEach((s) => s.addEventListener('change', fn));
+  $(`${panel} .filtros .btn`).onclick = () => {
+    document.querySelectorAll(`${panel} .filtros input, ${panel} .filtros select`).forEach((i) => { i.value = ''; });
+    tabla.limpiarFiltrosColumna(); fn();
+  };
+}
+conectarFiltros('#tab-compras', '#fcBuscar', filtrarCompras, tCompras);
+conectarFiltros('#tab-inventario', '#fiBuscar', filtrarInv, tInv);
+conectarFiltros('#tab-ventas', '#fvBuscar', filtrarVentas, tVentas);
 $('#expCompras').onclick = () => tCompras.exportarCSV();
 $('#expInv').onclick = () => tInv.exportarCSV();
+$('#expVentas').onclick = () => tVentas.exportarCSV();
 
 // ---------- Pestañas ----------
 document.querySelectorAll('.tab').forEach((b) => {
@@ -438,58 +465,75 @@ document.querySelectorAll('.tab').forEach((b) => {
 });
 
 // ---------- Carga de datos ----------
+const agrupar = (rows, k) => rows.reduce((m, r) => { const l = m.get(r[k]) || []; l.push(r); m.set(r[k], l); return m; }, new Map());
+
 async function cargarTodo() {
   $('#cargaInfo').textContent = 'Leyendo información de la base de datos…';
   try {
-    const [compras, inv, cargas] = await Promise.all([
-      fetchAll('compras', SELECT_COMPRAS, 'fecha_orden.desc,orden_compra.desc,numero_renglon.asc'),
+    const [compras, inv, ventas, comentarios, cargas] = await Promise.all([
+      fetchAll('compras_destino', SELECT_COMPRAS, 'fecha_orden.desc,orden_compra.desc,numero_renglon.asc'),
       fetchAll('inventario', '*', 'id.asc'),
+      fetchAll('ventas', '*', 'fecha_factura.desc,folio_factura.desc,id.asc'),
+      fetchAll('material_comentario', '*', 'codigo_material.asc'),
       fetchAll('cargas', '*', 'id.desc'),
     ]);
 
-    S.invPorMaterial = new Map();
-    inv.forEach((r) => {
-      const m = S.invPorMaterial.get(r.codigo_material) || { cantidad: 0, filas: [] };
-      m.cantidad += Number(r.cantidad_propia) || 0; m.filas.push(r);
-      S.invPorMaterial.set(r.codigo_material, m);
-    });
+    S.invPorMaterial = agrupar(inv, 'codigo_material');
+    S.comprasPorMaterial = agrupar(compras, 'codigo_material');
+    S.ventasPorMaterial = agrupar(ventas, 'codigo_material');
+    const comPorMaterial = new Map(comentarios.map((c) => [c.codigo_material, c]));
 
-    S.comprasPorMaterial = new Map();
     compras.forEach((r) => {
-      r._destino = clasificarDestino(r);
-      r._documento = documentosVenta(r);
-      r._existencia = S.invPorMaterial.has(r.codigo_material) ? S.invPorMaterial.get(r.codigo_material).cantidad : null;
+      r._mes = mesDe(r.fecha_orden);
+      const filas = S.invPorMaterial.get(r.codigo_material);
+      r._existencia = filas ? sum(filas, 'cantidad_propia') : null;
       r._s = norm([r.orden_compra, r.texto_cabecera, r.nuestra_referencia, r.referencia, r.solicitante_oc, r.nombre_usuario,
-        r.descripcion_motivo_pedido, r.nombre_proveedor, r.codigo_material, r.descripcion_material, r._destino, r._documento].join(' | '));
-      const list = S.comprasPorMaterial.get(r.codigo_material) || [];
-      list.push(r); S.comprasPorMaterial.set(r.codigo_material, list);
+        r.descripcion_motivo_pedido, r.nombre_proveedor, r.codigo_material, r.descripcion_material, r.destino, r.documento_venta,
+        r.vendedor_oc].join(' | '));
     });
-
+    ventas.forEach((r) => {
+      r._mes = mesDe(r.fecha_factura);
+      r._s = norm([r.folio_factura, r.codigo_material, r.descripcion_material, r.nombre_cliente, r.nombre_vendedor].join(' | '));
+    });
     inv.forEach((r) => {
       const list = S.comprasPorMaterial.get(r.codigo_material) || [];
+      const c = comPorMaterial.get(r.codigo_material);
       r._nCompras = list.length;
       r._pedido = list.length ? sum(list, 'cantidad_pedida') : null;
       r._pendiente = list.length ? sum(list, 'cantidad_pendiente') : null;
-      r._ultFecha = list[0]?.fecha_orden || null; // compras ya vienen ordenadas por fecha desc
-      r._ultDestino = list[0]?._destino || null;
-      r._ultPara = list[0] ? [list[0].texto_cabecera, list[0].nuestra_referencia].filter(Boolean).join(' · ') : null;
+      r._destino = c ? c.destino : null;
+      r._comentario = c ? c.comentario : `${r.codigo_material}: sin compras de febrero a la fecha`;
+      r._ultFecha = c ? c.fecha_orden : null;
+      r._ultMes = mesDe(r._ultFecha);
+      r._ultOC = c ? c.orden_compra : null;
+      r._cliente = c ? c.nombre_cliente : null;
+      r._vendedor = c ? (c.vendedor_factura || c.vendedor_oc) : null;
+      r._vendido = c ? c.vendido_desde_ultima_oc : null;
       r._s = norm([r.codigo_material, r.descripcion_material, r.clave_proveedor_material, r.nombre_proveedor, r.numero_proveedor,
-        r.descrip_gpo_materiales, r.grupo_articulos_externo, r._ultPara].join(' | '));
+        r.descrip_gpo_materiales, r.grupo_articulos_externo, r._comentario].join(' | '));
     });
 
-    Object.assign(S, { compras, inv, cargas });
+    Object.assign(S, { compras, inv, ventas, cargas });
 
-    opciones($('#fcDestino'), compras.map((r) => r._destino));
+    opcionesMes($('#fcMes'), compras.map((r) => r._mes));
+    opciones($('#fcDestino'), compras.map((r) => r.destino));
+    opciones($('#fcVendedor'), compras.map((r) => r.vendedor_oc));
     opciones($('#fcUsuario'), compras.map((r) => r.nombre_usuario));
     opciones($('#fcMotivo'), compras.map((r) => r.descripcion_motivo_pedido));
     opciones($('#fcProveedor'), compras.map((r) => r.nombre_proveedor));
     opciones($('#fcReferencia'), compras.map((r) => r.referencia));
+    opciones($('#fiDestino'), inv.map((r) => r._destino));
+    opcionesMes($('#fiMes'), inv.map((r) => r._ultMes));
     opciones($('#fiGrupo'), inv.map((r) => r.descrip_gpo_materiales));
     opciones($('#fiProveedor'), inv.map((r) => r.nombre_proveedor));
     opciones($('#fiAbc'), inv.map((r) => r.indicador_abc_actual));
+    opcionesMes($('#fvMes'), ventas.map((r) => r._mes));
+    opciones($('#fvVendedor'), ventas.map((r) => r.nombre_vendedor));
+    opciones($('#fvCanal'), ventas.map((r) => r.canal_distribucion));
 
-    filtrarCompras();
     filtrarInv();
+    filtrarCompras();
+    filtrarVentas();
     tCargas.setRows(cargas);
     pintarUltimaCarga();
   } catch (err) {
@@ -500,9 +544,10 @@ async function cargarTodo() {
 function ultimaCarga() { return S.cargas.find((c) => c.estado === 'completada'); }
 function pintarUltimaCarga() {
   const c = ultimaCarga();
+  const ventasRango = S.ventas.length ? `${fDate(S.ventas[S.ventas.length - 1].fecha_factura)} al ${fDate(S.ventas[0].fecha_factura)}` : 'sin ventas';
   $('#cargaInfo').innerHTML = c
     ? `<b>Última carga:</b> ${esc(fDateTime(c.fecha))} · ${esc(c.archivo || '')}<br>`
-      + `<b>OC más reciente en base:</b> ${esc(fDate(c.fecha_max_orden))} · ${nf0.format(S.compras.length)} compras · ${nf0.format(S.inv.length)} renglones de inventario`
+      + `<b>OC más reciente:</b> ${esc(fDate(c.fecha_max_orden))} · <b>Ventas:</b> ${esc(ventasRango)} · ${nf0.format(S.inv.length)} renglones de inventario`
     : 'Aún no hay cargas registradas.';
 }
 
@@ -512,7 +557,9 @@ function cerrar(m) { m.hidden = true; }
 document.querySelectorAll('.modal').forEach((m) => {
   m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-close]')) cerrar(m); });
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal').forEach((m) => { if (m.id !== 'modalCarga' || !subiendo) cerrar(m); }); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal').forEach((m) => { if (m.id !== 'modalCarga' || !subiendo) cerrar(m); });
+});
 
 function gridCampos(obj, labels, tipos = {}) {
   return `<div class="det-grid">${Object.keys(labels).map((k) => `<div><div class="l">${esc(labels[k])}</div><div class="v">${esc(fmt({ type: tipos[k] }, obj[k])) || '—'}</div></div>`).join('')}</div>`;
@@ -523,6 +570,7 @@ function miniTabla(cols, rows) {
     rows.map((r) => `<tr>${cols.map((c) => `<td${NUMERIC.has(c.type) ? ' class="n"' : ''}>${c.render ? c.render(r) : esc(fmt(c, r[c.k]))}</td>`).join('')}</tr>`).join('')
   }</tbody></table></div>`;
 }
+const pick = (cols, keys) => cols.filter((c) => keys.includes(c.k));
 
 async function detalleCompra(r) {
   $('#detTitulo').textContent = `OC ${r.orden_compra} · renglón ${r.numero_renglon}`;
@@ -531,32 +579,29 @@ async function detalleCompra(r) {
   try {
     const res = await api(`compras?orden_compra=eq.${encodeURIComponent(r.orden_compra)}&numero_renglon=eq.${r.numero_renglon}&select=*`);
     const [full] = await res.json();
-    const inv = S.invPorMaterial.get(r.codigo_material);
-    $('#detCuerpo').innerHTML = `<p>${badgeDestino(r._destino)} <b>${esc(r.codigo_material)}</b> · ${esc(r.descripcion_material)}</p>`
-      + `<p class="hint"><b>Para quién:</b> ${esc(r.texto_cabecera || 'Sin texto de cabecera')}${r._documento ? ` · <b>Ticket / pedido:</b> ${esc(r._documento)}` : ''}${r.nuestra_referencia ? ` · <b>Nuestra ref.:</b> ${esc(r.nuestra_referencia)}` : ''}</p>`
+    const inv = S.invPorMaterial.get(r.codigo_material) || [];
+    $('#detCuerpo').innerHTML = `<p>${badgeDestino(r.destino)} <b>${esc(r.codigo_material)}</b> · ${esc(r.descripcion_material)}</p>`
+      + `<p class="hint"><b>Para quién:</b> ${esc(r.texto_cabecera || 'Sin texto de cabecera')}${r.vendedor_oc ? ` · <b>Vendedor:</b> ${esc(r.vendedor_oc)}` : ''}${r.documento_venta ? ` · <b>Ticket / pedido:</b> ${esc(r.documento_venta)}` : ''}</p>`
       + gridCampos(full || r, LABELS_COMPRA, TIPOS_COMPRA)
       + '<h3 class="det-sub">Inventario actual de este material</h3>'
-      + miniTabla(COLS_INV.slice(0, 17).filter((c) => ['centro', 'almacen', 'nombre_proveedor', 'cantidad_propia', 'unidad_medida_base', 'importe_inventario_propio', 'costo_promedio_unitario'].includes(c.k)), inv ? inv.filas : []);
+      + miniTabla(pick(COLS_INV, ['centro', 'almacen', 'nombre_proveedor', 'cantidad_propia', 'unidad_medida_base', 'importe_inventario_propio', '_comentario']), inv);
   } catch (err) {
     $('#detCuerpo').innerHTML = `<p class="msg err">${esc(err.message)}</p>`;
   }
 }
 
-const COLS_MINI_COMPRAS = [
-  { k: 'fecha_orden', t: 'Fecha OC', type: 'date' }, { k: 'orden_compra', t: 'OC' }, { k: 'numero_renglon', t: 'Ren.', type: 'int' },
-  { k: '_destino', t: 'Destino', render: (r) => badgeDestino(r._destino) }, { k: 'texto_cabecera', t: 'Para quién' },
-  { k: 'nuestra_referencia', t: 'Nuestra ref.' }, { k: 'referencia', t: 'Referencia' }, { k: 'nombre_usuario', t: 'Comprador' },
-  { k: 'descripcion_motivo_pedido', t: 'Motivo' }, { k: 'cantidad_pedida', t: 'Pedida', type: 'num' },
-  { k: 'cantidad_entrada', t: 'Recibida', type: 'num' }, { k: 'cantidad_pendiente', t: 'Pendiente', type: 'num' },
-  { k: 'costo_pedido', t: 'Costo', type: 'money' },
-];
 function detalleMaterial(r) {
   $('#detTitulo').textContent = `Material ${r.codigo_material}`;
   const compras = S.comprasPorMaterial.get(r.codigo_material) || [];
+  const ventas = S.ventasPorMaterial.get(r.codigo_material) || [];
   $('#detCuerpo').innerHTML = `<p><b>${esc(r.descripcion_material)}</b></p>`
+    + `<p class="hint">${badgeDestino(r._destino)} ${esc(r._comentario)}</p>`
     + gridCampos(r, LABELS_INV, { cantidad_propia: 'num', importe_inventario_propio: 'money', costo_reposicion_unitario: 'money', costo_promedio_unitario: 'money' })
     + `<h3 class="det-sub">Compras de este material y para quién se compraron (${compras.length})</h3>`
-    + miniTabla(COLS_MINI_COMPRAS, compras);
+    + miniTabla(pick(COLS_COMPRAS, ['fecha_orden', 'orden_compra', 'numero_renglon', 'destino', 'vendedor_oc', 'texto_cabecera', 'nombre_usuario',
+      'descripcion_motivo_pedido', 'cantidad_pedida', 'cantidad_entrada', 'cantidad_pendiente', 'costo_pedido']), compras)
+    + `<h3 class="det-sub">Ventas de este material (${ventas.length})</h3>`
+    + miniTabla(pick(COLS_VENTAS, ['fecha_factura', 'folio_factura', 'cantidad_facturada', 'nombre_cliente', 'nombre_vendedor', 'importe_venta']), ventas);
   abrir('#modalDetalle');
 }
 
@@ -565,13 +610,20 @@ let libro = null; let subiendo = false;
 const DETECTAR = {
   compras: (h) => h.includes('Orden de Compra') && h.includes('Número de Renglón'),
   inventario: (h) => h.includes('Cantidad Propia') && h.includes('Codigo Material'),
+  ventas: (h) => h.includes('Folio de la Factura') && h.includes('Cantidad Facturada UMB'),
 };
+const DESCRIPCION_TIPO = {
+  inventario: 'Inventario: reemplaza el inventario completo.',
+  compras: 'Compras: agrega OC nuevas y actualiza las existentes (Orden de Compra + Renglón).',
+  ventas: 'Ventas: reemplaza las ventas de los días que trae el archivo.',
+};
+const ORDEN_TIPO = { inventario: 0, compras: 1, ventas: 2 };
 
 $('#btnActualizar').onclick = () => {
   const c = ultimaCarga();
   $('#hintCarga').innerHTML = c
-    ? `Última carga: <b>${esc(fDateTime(c.fecha))}</b>. La OC más reciente en la base es del <b>${esc(fDate(c.fecha_max_orden))}</b>: basta con subir el reporte de compras desde esa fecha (las OC que ya existan se actualizan, no se duplican) y la hoja de inventario actual completa.`
-    : 'Sube el Excel con las hojas "Inventario" y "Reporte de compras".';
+    ? `Última carga: <b>${esc(fDateTime(c.fecha))}</b>. La OC más reciente en la base es del <b>${esc(fDate(c.fecha_max_orden))}</b>: basta con subir el reporte de compras desde esa fecha, la hoja de inventario actual y las ventas de los días nuevos.`
+    : 'Sube el Excel con las hojas de inventario, reporte de compras y/o ventas.';
   $('#msgCarga').textContent = ''; $('#msgCarga').className = 'msg';
   $('#progreso').hidden = true;
   abrir('#modalCarga');
@@ -582,7 +634,7 @@ $('#archivo').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   libro = null; $('#hojas').innerHTML = ''; $('#btnSubir').disabled = true; $('#msgCarga').textContent = '';
   if (!file) return;
-  $('#msgCarga').textContent = 'Leyendo archivo…';
+  $('#msgCarga').className = 'msg'; $('#msgCarga').textContent = 'Leyendo archivo…';
   try {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const hojas = [];
@@ -593,11 +645,10 @@ $('#archivo').addEventListener('change', async (e) => {
       const tipo = Object.keys(DETECTAR).find((t) => DETECTAR[t](headers));
       if (tipo) hojas.push({ name, tipo, filas });
     });
-    if (!hojas.length) throw new Error('No se encontró una hoja de "Inventario" ni de "Reporte de compras" con los encabezados esperados.');
+    if (!hojas.length) throw new Error('No se encontró una hoja de inventario, reporte de compras o ventas con los encabezados esperados.');
     libro = { nombre: file.name, hojas };
     $('#hojas').innerHTML = hojas.map((h, i) => `<label><input type="checkbox" data-i="${i}" checked>
-      <span><b>${esc(h.name)}</b> · ${nf0.format(h.filas.length)} filas
-      <small>${h.tipo === 'inventario' ? 'Reemplaza el inventario completo.' : 'Agrega OC nuevas y actualiza las existentes (Orden de Compra + Renglón).'}</small></span></label>`).join('');
+      <span><b>${esc(h.name)}</b> · ${nf0.format(h.filas.length)} filas<small>${DESCRIPCION_TIPO[h.tipo]}</small></span></label>`).join('');
     $('#msgCarga').textContent = '';
     $('#btnSubir').disabled = false;
   } catch (err) {
@@ -606,11 +657,9 @@ $('#archivo').addEventListener('change', async (e) => {
 });
 
 $('#btnSubir').onclick = async () => {
-  const clave = $('#clave').value;
   const msg = $('#msgCarga');
-  if (!clave) { msg.className = 'msg err'; msg.textContent = 'Escribe la clave de carga.'; return; }
   const elegidas = [...$('#hojas').querySelectorAll('input:checked')].map((i) => libro.hojas[Number(i.dataset.i)])
-    .sort((a, b) => (a.tipo === 'inventario' ? 0 : 1) - (b.tipo === 'inventario' ? 0 : 1));
+    .sort((a, b) => ORDEN_TIPO[a.tipo] - ORDEN_TIPO[b.tipo]);
   if (!elegidas.length) { msg.className = 'msg err'; msg.textContent = 'Selecciona al menos una hoja.'; return; }
 
   subiendo = true; $('#btnSubir').disabled = true; msg.className = 'msg'; msg.textContent = '';
@@ -623,20 +672,23 @@ $('#btnSubir').onclick = async () => {
   };
   try {
     avance('Iniciando');
-    const id = await rpc('iniciar_carga', { p_clave: clave, p_archivo: libro.nombre });
+    const id = await rpc('iniciar_carga', { p_archivo: libro.nombre });
     for (const h of elegidas) {
       for (let i = 0; i < h.filas.length; i += LOTE) {
         const lote = h.filas.slice(i, i + LOTE);
-        await rpc('cargar_lote', { p_clave: clave, p_carga_id: id, p_tipo: h.tipo, p_filas: lote });
+        await rpc('cargar_lote', { p_carga_id: id, p_tipo: h.tipo, p_filas: lote });
         hechos += lote.length;
         avance(`Subiendo ${h.name}`);
       }
     }
     avance('Finalizando');
-    const c = await rpc('finalizar_carga', { p_clave: clave, p_carga_id: id });
+    const c = await rpc('finalizar_carga', { p_carga_id: id });
+    const partes = [];
+    if (c.registros_compras) partes.push(`${nf0.format(c.compras_nuevas)} compras nuevas y ${nf0.format(c.compras_actualizadas)} actualizadas`);
+    if (c.registros_inventario) partes.push(`inventario reemplazado con ${nf0.format(c.registros_inventario)} renglones`);
+    if (c.registros_ventas) partes.push(`${nf0.format(c.registros_ventas)} renglones de ventas`);
     msg.className = 'msg ok';
-    msg.innerHTML = `Carga #${c.id} completada: ${nf0.format(c.compras_nuevas)} compras nuevas, ${nf0.format(c.compras_actualizadas)} actualizadas`
-      + (c.registros_inventario ? `, inventario reemplazado con ${nf0.format(c.registros_inventario)} renglones.` : '.');
+    msg.textContent = `Carga #${c.id} completada: ${partes.join(', ')}.`;
     await cargarTodo();
   } catch (err) {
     msg.className = 'msg err'; msg.textContent = `No se completó la carga: ${err.message}`;
@@ -645,4 +697,69 @@ $('#btnSubir').onclick = async () => {
   }
 };
 
-cargarTodo();
+// ---------- Sesión ----------
+let modoLogin = 'entrar'; // entrar | crear | recuperar | nueva
+function setModo(m) {
+  modoLogin = m;
+  $('#lgMsg').textContent = ''; $('#lgMsg').className = 'msg';
+  $('#lgPassWrap').hidden = m === 'recuperar';
+  $('#lgEmail').closest('label').hidden = m === 'nueva';
+  $('#lgEntrar').textContent = { entrar: 'Entrar', crear: 'Crear cuenta', recuperar: 'Enviar enlace para cambiar contraseña', nueva: 'Guardar nueva contraseña' }[m];
+  $('#lgCrear').textContent = m === 'entrar' ? 'Crear cuenta' : 'Ya tengo cuenta';
+}
+$('#lgCrear').onclick = () => setModo(modoLogin === 'entrar' ? 'crear' : 'entrar');
+$('#lgOlvide').onclick = () => setModo('recuperar');
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = $('#lgEmail').value.trim(); const password = $('#lgPass').value;
+  const msg = $('#lgMsg'); msg.className = 'msg'; msg.textContent = 'Procesando…';
+  let error = null;
+  if (modoLogin === 'entrar') ({ error } = await sb.auth.signInWithPassword({ email, password }));
+  else if (modoLogin === 'crear') {
+    let data;
+    ({ data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin } }));
+    if (!error && !data.session) { msg.className = 'msg ok'; msg.textContent = 'Te enviamos un correo para confirmar tu cuenta. Confírmala y vuelve a entrar.'; setTimeout(() => setModo('entrar'), 50); return; }
+  } else if (modoLogin === 'recuperar') {
+    ({ error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin }));
+    if (!error) { msg.className = 'msg ok'; msg.textContent = 'Revisa tu correo para cambiar la contraseña.'; return; }
+  } else if (modoLogin === 'nueva') {
+    ({ error } = await sb.auth.updateUser({ password }));
+    if (!error) { msg.className = 'msg ok'; msg.textContent = 'Contraseña actualizada.'; }
+  }
+  if (error) { msg.className = 'msg err'; msg.textContent = traducirError(error.message); }
+});
+function traducirError(m) {
+  if (/invalid login/i.test(m)) return 'Correo o contraseña incorrectos.';
+  if (/not confirmed/i.test(m)) return 'Primero confirma tu cuenta desde el correo que te enviamos.';
+  if (/already registered/i.test(m)) return 'Ese correo ya tiene cuenta; usa "Entrar" o "Olvidé mi contraseña".';
+  if (/rate limit/i.test(m)) return 'Demasiados intentos, espera unos minutos.';
+  return m;
+}
+$('#btnSalir').onclick = () => sb.auth.signOut();
+
+let sesionActiva = null;
+async function alCambiarSesion(event, session) {
+  if (event === 'PASSWORD_RECOVERY') { $('#login').hidden = false; setModo('nueva'); return; }
+  token = session ? session.access_token : null;
+  const email = session && session.user.email;
+  if (!session) { sesionActiva = null; $('#login').hidden = false; setModo('entrar'); return; }
+  if (modoLogin === 'nueva') {
+    if (event !== 'USER_UPDATED') return;
+    setModo('entrar');
+  }
+  $('#login').hidden = true;
+  if (sesionActiva === email) return; // solo refresco de token
+  sesionActiva = email;
+  $('#usuarioEmail').textContent = email;
+  const res = await api(`usuarios?select=puede_cargar&email=eq.${encodeURIComponent(email)}`);
+  const [u] = await res.json();
+  if (!u) {
+    $('#cargaInfo').innerHTML = `<b>${esc(email)}</b> no está dado de alta. Pide acceso al administrador.`;
+    $('#btnActualizar').hidden = true;
+    return;
+  }
+  $('#btnActualizar').hidden = !u.puede_cargar;
+  cargarTodo();
+}
+sb.auth.onAuthStateChange((event, session) => { setTimeout(() => alCambiarSesion(event, session), 0); });
